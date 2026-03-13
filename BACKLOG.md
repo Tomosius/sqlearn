@@ -19,7 +19,7 @@ These are ready to work on. Ordered by priority.
 - [x] `CLAUDE.md` with project conventions (update from current draft)
 - [x] Empty test suite that passes
 - [x] `.gitignore`, `LICENSE` (MIT), `README.md` (minimal)
-- [ ] **Ship:** `pip install -e .` works, `pytest` runs, CI green
+- [x] **Ship:** `pip install -e .` works, `pytest` runs, CI green
 
 ---
 

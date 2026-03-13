@@ -213,6 +213,6 @@ Zed project settings in `.zed/settings.json`:
 
 ## Current Status
 
-Milestone 1 (scaffolding) in progress.
+Milestone 1 (scaffolding) complete. Milestone 2 (core compiler) is next.
 See `docs/12-milestones.md` for the full roadmap.
 See `BACKLOG.md` for tracked items.
