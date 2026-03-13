@@ -172,6 +172,8 @@ All design docs are in `docs/`. Read what you need:
 | `pyright` | Primary type checker (strict mode, Zed integration) | `pyproject.toml [tool.pyright]` |
 | `mypy` | Secondary type checker (strict mode, CI gate) | `pyproject.toml [tool.mypy]` |
 | `pytest` | Testing + coverage | `pyproject.toml [tool.pytest]` |
+| `hypothesis` | Property-based testing (fuzz inputs) | Used in test files |
+| `mutmut` | Mutation testing (verifies test quality) | `Makefile` |
 | `interrogate` | Docstring coverage (95% minimum) | `pyproject.toml [tool.interrogate]` |
 | `vulture` | Dead code detection | `pyproject.toml [tool.vulture]` |
 | `pre-commit` | Git hooks (ruff + mypy + interrogate + vulture + hygiene) | `.pre-commit-config.yaml` |
@@ -186,11 +188,21 @@ make format                           # ruff format
 make typecheck                        # pyright + mypy (strict)
 make interrogate                      # docstring coverage
 make vulture                          # dead code detection
-make test                             # pytest
-make cov                              # pytest with coverage
+make test                             # Tier 1: fast tests (failed first)
+make cov                              # Tier 2: full coverage
+make mutant                           # Tier 3: mutation testing
+make test-full                        # Tier 2+3: coverage + mutation
 make prerelease                       # test across Python 3.10-3.14
 make clean                            # remove build artifacts
 ```
+
+### Three-tier testing strategy
+
+| Tier | Command | When to use |
+|---|---|---|
+| 1 | `make test` | During development — fast, failed-first, stops on first failure |
+| 2 | `make cov` | Before committing — full coverage report |
+| 3 | `make test-full` | Before releases — coverage + mutation testing (slow) |
 
 ### Editor
 

@@ -23,6 +23,7 @@ ENV/
 .coverage
 htmlcov/
 coverage.xml
+.mutmut-cache/
 
 # IDEs
 .idea/
