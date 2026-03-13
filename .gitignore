@@ -35,8 +35,7 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# uv
-uv.lock
+# uv — lockfile committed for reproducible CI
 
 # DuckDB
 *.duckdb
