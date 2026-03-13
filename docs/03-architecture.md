@@ -123,7 +123,10 @@ class Transformer:
         ...
 
     def get_params(self, deep=True):
-        """Return __init__ params as dict. Enables GridSearch + clone."""
+        """Return __init__ params as dict. Enables GridSearch + clone.
+        When deep=True, recurses into nested estimators using HasGetParams
+        protocol detection (runtime-checkable Protocol). Nested params
+        use __ separator: pipeline.get_params()['scaler__with_mean']."""
         ...
 
     def set_params(self, **params):
@@ -1467,6 +1470,58 @@ CI tests verify against the declaration.
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+#### 4.3.12b Future: AST-Based Classification Validation
+
+The current three-tier system classifies based on `discover()` return values. An additional
+validation layer could use sqlglot to inspect the SQL AST itself and verify that the
+classification is consistent with the SQL structure. This was prototyped in `ducklearn1`
+as a `FitInspector` class with the following heuristic rules:
+
+**Static indicators (SQL returns exactly one row):**
+- No `FROM` clause → pure scalar expression
+- `LIMIT 1` → forced single row
+- Scalar aggregate: all projections are aggregate functions (AVG, SUM, COUNT, etc.),
+  no bare column references → guaranteed single row
+- Read from a known-static CTE (two-pass analysis: classify CTE bodies first)
+
+**Dynamic indicators (SQL returns multiple rows):**
+- `SELECT *` at top level
+- `DISTINCT` clause
+- `GROUP BY` clause
+- Window functions (OVER)
+- `ORDER BY` without `LIMIT`
+- `LIMIT > 1` or non-constant `LIMIT`
+
+**Aggregate function detection set:** AVG, SUM, MIN, MAX, COUNT, STDDEV, STDDEV_POP,
+STDDEV_SAMP, VAR, VARIANCE, VAR_POP, VAR_SAMP, MEDIAN, MODE.
+
+**Two-pass CTE analysis:** When a query uses CTEs, classify each CTE body first. Then
+use that knowledge when classifying the outer query — reading from a static CTE
+inherits the static property.
+
+This would be an **optional additional validation layer**, not a replacement for the
+current discover()-based classification. If the AST says "dynamic" but discover()
+returns `{}`, that's a `ClassificationError`. *(from ducklearn1)*
+
+#### 4.3.12c `HasGetParams` Protocol
+
+Runtime-checkable protocol for detecting nested estimators that support `get_params()`.
+Used in `get_params(deep=True)` to recurse into nested objects without requiring
+inheritance from `Transformer`:
+
+```python
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class HasGetParams(Protocol):
+    def get_params(self, deep: bool = True) -> dict: ...
+```
+
+This enables `get_params(deep=True)` to detect and recurse into any object that
+implements `get_params()`, including third-party estimators or custom nested objects.
+Nested params use `__` separator: `pipeline.get_params()['scaler__with_mean']`.
+*(from ducklearn1)*
 
 ### 4.3.13 `discover()` Contract
 

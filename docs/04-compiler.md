@@ -240,6 +240,65 @@ pass per step.
 
 **Key insight: layers only matter during fit. Transform is always one SQL query.**
 
+### 5.3b Three-Phase Planner Architecture
+
+The compiler's fit-and-transform work can be conceptually split into three planning
+phases, each with a distinct responsibility. This was prototyped in `ducklearn1` as
+explicit planner classes:
+
+**Phase 1 — FitInspection:** Walk pipeline steps, classify each as static/dynamic
+(Section 4.3). Produce a `FitInspectionPlan`: an ordered list of `StepFitInfo` objects,
+each containing step name, estimator reference, SQL templates, and `is_static` flag.
+
+```python
+@dataclass
+class StepFitInfo:
+    step_name: str
+    estimator: Transformer
+    sql_templates: dict[str, Expression]  # from discover()
+    is_static: bool
+
+@dataclass
+class FitInspectionPlan:
+    steps: list[StepFitInfo]
+```
+
+**Phase 2 — FitExecution:** Take inspection results and plan how to batch fit SQL
+into minimal DuckDB queries. Key optimization: **combine multiple static fit queries
+into one multi-CTE query** to minimize database round-trips:
+
+```sql
+-- Instead of 3 separate queries for 3 static steps:
+-- SELECT MEDIAN(price) FROM data;
+-- SELECT AVG(price), STDDEV_POP(price) FROM data;
+-- SELECT DISTINCT city FROM data;
+
+-- Batch static aggregates into ONE query:
+WITH
+    cte_imputer AS (SELECT MEDIAN(price) AS median_price FROM data),
+    cte_scaler  AS (SELECT AVG(price) AS mean_price,
+                           STDDEV_POP(price) AS std_price FROM data)
+SELECT
+    (SELECT median_price FROM cte_imputer) AS imputer__price__median,
+    (SELECT mean_price FROM cte_scaler) AS scaler__price__mean,
+    (SELECT std_price FROM cte_scaler) AS scaler__price__std
+```
+
+Each CTE output is mapped back to its originating step/attribute. This reduces
+the total number of DuckDB queries during fit from N (one per dynamic step) to
+the theoretical minimum (one per layer for aggregates, plus set queries).
+
+**Phase 3 — TransformPlanner:** Compose all `expressions()` / `query()` outputs
+into a single optimized query. Applies optimizations:
+- Flatten trivial wrappers (`SELECT * FROM (SELECT * FROM (...))` → single SELECT)
+- Extract common subexpressions into CTEs
+- Dialect-aware cleanup before sqlglot translation
+
+The current sqlearn compiler (Section 5.1-5.3) already handles Phase 3 via expression
+composition. Phases 1-2 are implicit in the layer resolution logic. Making them
+explicit planner objects could improve testability and enable per-phase optimization.
+*(from ducklearn1)*
+
 ### 5.4 Why This Beats sklearn (and Polars)
 
 **sklearn:**

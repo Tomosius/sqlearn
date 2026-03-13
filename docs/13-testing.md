@@ -36,6 +36,49 @@ def test_sklearn_equivalence(sqlearn_cls, sklearn_cls, kwargs, sample_data):
 
 Cover edge cases: NaN columns, constant columns, single-row input.
 
+### Exhaustive Combinatorial Testing
+
+For classification and planner logic, use exhaustive feature-combination testing.
+Create test estimators with configurable feature flags, then generate all non-empty
+subsets to verify correct behavior for every combination:
+
+```python
+from itertools import combinations
+
+class FeatureComboEstimator(Transformer):
+    """Test estimator that enables features via a set of flags."""
+    def __init__(self, features: set[int]):
+        self.features = features
+
+    def discover(self, columns, schema, y_column=None):
+        result = {}
+        if 1 in self.features:
+            result["mean"] = Avg(Column("price"))
+        if 2 in self.features:
+            result["std"] = StddevPop(Column("price"))
+        # ... more feature flags
+        return result
+
+# Generate all 31 non-empty subsets of {1, 2, 3, 4, 5}
+ALL_COMBOS = []
+for r in range(1, 6):
+    for combo in combinations(range(1, 6), r):
+        ALL_COMBOS.append(set(combo))
+
+@pytest.mark.parametrize("features", ALL_COMBOS)
+def test_classification_all_combos(features):
+    """Every feature combination must classify correctly."""
+    step = FeatureComboEstimator(features)
+    result = _classify_step(step, ...)
+    expected = "dynamic" if features else "static"
+    assert result.kind == expected
+```
+
+This pattern catches edge cases where specific feature combinations interact
+unexpectedly — particularly valuable for planner and compiler logic where
+individual features may be correct but their combinations reveal bugs.
+*(from ducklearn1)*
+
 ### Pipeline Tests
 
 - Full pipeline output matches sklearn
