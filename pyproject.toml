@@ -23,11 +23,11 @@ classifiers = [
 ]
 dependencies = [
     "duckdb>=1.0",
-    "sqlglot>=25.0",
-    "numpy>=1.24",
+    "sqlglot[rs]>=25.0",
 ]
 
 [project.optional-dependencies]
+numpy = ["numpy>=1.24"]
 pandas = ["pandas>=1.5"]
 polars = ["polars>=0.20"]
 arrow = ["pyarrow>=12.0"]
@@ -42,7 +42,7 @@ studio = [
     "plotly>=5.15",
     "nbformat>=5.9",
 ]
-all = ["sqlearn[pandas,polars,arrow,sparse,plot,optuna,yaml]"]
+all = ["sqlearn[numpy,pandas,polars,arrow,sparse,plot,optuna,yaml]"]
 
 [project.urls]
 Homepage = "https://github.com/Tomosius/sqlearn"
@@ -208,12 +208,35 @@ exclude_lines = [
     "\\.\\.\\.",
 ]
 
+# =============================================================================
+# Interrogate — docstring coverage
+# =============================================================================
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = true
+ignore-module = true
+ignore-private = true
+ignore-magic = true
+fail-under = 95
+verbose = 1
+exclude = ["tests", "docs"]
+
+# =============================================================================
+# Vulture — dead code detection
+# =============================================================================
+[tool.vulture]
+paths = ["src/sqlearn"]
+min_confidence = 80
+exclude = ["tests"]
+
 [dependency-groups]
 dev = [
+    "interrogate>=1.7",
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.6",
+    "vulture>=2.11",
 ]

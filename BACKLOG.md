@@ -12,13 +12,13 @@ Update this file as items are added, started, or completed.
 These are ready to work on. Ordered by priority.
 
 ### Milestone 1 — Scaffolding
-- [ ] Initialize git repository
-- [ ] `pyproject.toml` with `src/sqlearn/` layout
-- [ ] CI (GitHub Actions: lint + test, Python 3.10-3.13)
-- [ ] Pre-commit hooks (ruff format, ruff check, mypy)
-- [ ] `CLAUDE.md` with project conventions (update from current draft)
-- [ ] Empty test suite that passes
-- [ ] `.gitignore`, `LICENSE` (MIT), `README.md` (minimal)
+- [x] Initialize git repository
+- [x] `pyproject.toml` with `src/sqlearn/` layout
+- [x] CI (GitHub Actions: lint + test, Python 3.10-3.14)
+- [x] Pre-commit hooks (ruff format, ruff check, mypy)
+- [x] `CLAUDE.md` with project conventions (update from current draft)
+- [x] Empty test suite that passes
+- [x] `.gitignore`, `LICENSE` (MIT), `README.md` (minimal)
 - [ ] **Ship:** `pip install -e .` works, `pytest` runs, CI green
 
 ---

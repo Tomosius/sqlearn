@@ -159,7 +159,7 @@ All design docs are in `docs/`. Read what you need:
 - Tests: `pytest`, one test file per source file, `tests/` mirrors `src/`
 - All SQL via sqlglot ASTs — if you're writing raw SQL strings, stop
 - Transformers: implement `discover()`, `expressions()`, and/or `query()`
-- Output: numpy by default (`__array__` protocol), optional arrow/pandas/polars
+- Output: Arrow by default (built into DuckDB), optional numpy/pandas/polars
 - Docstrings: Google style, required on all public classes/functions
 - Type annotations: required on all function signatures (strict mode)
 
@@ -172,17 +172,24 @@ All design docs are in `docs/`. Read what you need:
 | `pyright` | Primary type checker (strict mode, Zed integration) | `pyproject.toml [tool.pyright]` |
 | `mypy` | Secondary type checker (strict mode, CI gate) | `pyproject.toml [tool.mypy]` |
 | `pytest` | Testing + coverage | `pyproject.toml [tool.pytest]` |
-| `pre-commit` | Git hooks (ruff + mypy + hygiene) | `.pre-commit-config.yaml` |
+| `interrogate` | Docstring coverage (95% minimum) | `pyproject.toml [tool.interrogate]` |
+| `vulture` | Dead code detection | `pyproject.toml [tool.vulture]` |
+| `pre-commit` | Git hooks (ruff + mypy + interrogate + vulture + hygiene) | `.pre-commit-config.yaml` |
+| `make` | Dev workflow entry point | `Makefile` |
 
 ### Quick commands
 
 ```bash
-uv run ruff check src/ tests/        # lint
-uv run ruff format src/ tests/       # format
-uv run pyright src/                   # type check (primary)
-uv run mypy src/                      # type check (secondary)
-uv run pytest                         # test
-uv run pytest --cov                   # test with coverage
+make check                            # run ALL checks (lint + type + docs + dead code + test)
+make lint                             # ruff check
+make format                           # ruff format
+make typecheck                        # pyright + mypy (strict)
+make interrogate                      # docstring coverage
+make vulture                          # dead code detection
+make test                             # pytest
+make cov                              # pytest with coverage
+make prerelease                       # test across Python 3.10-3.14
+make clean                            # remove build artifacts
 ```
 
 ### Editor
