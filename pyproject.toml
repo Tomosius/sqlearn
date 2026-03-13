@@ -213,7 +213,7 @@ exclude_lines = [
 # =============================================================================
 [tool.interrogate]
 ignore-init-method = true
-ignore-init-module = true
+ignore-init-module = false
 ignore-module = true
 ignore-private = true
 ignore-magic = true

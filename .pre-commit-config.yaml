@@ -20,6 +20,7 @@ repos:
     hooks:
       - id: interrogate
         args: [src/sqlearn/, --fail-under=95]
+        pass_filenames: false
 
   - repo: https://github.com/jendrikseipp/vulture
     rev: v2.14

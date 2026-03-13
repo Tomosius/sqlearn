@@ -28,7 +28,7 @@ typecheck: ## Run pyright + mypy (strict)
 	uv run mypy src/
 
 interrogate: ## Check docstring coverage (95% minimum)
-	uv run interrogate src/sqlearn/ || echo "No files to interrogate (expected during scaffolding)"
+	uv run interrogate src/sqlearn/
 
 vulture: ## Detect dead code
 	uv run vulture src/sqlearn/
