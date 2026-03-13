@@ -155,15 +155,45 @@ All design docs are in `docs/`. Read what you need:
 ## Coding Conventions
 
 - Python 3.10+ (use `X | Y` union types, not `Union[X, Y]`)
-- `ruff` for formatting and linting, `mypy` for type checking
 - `src/sqlearn/` layout with `pyproject.toml`
 - Tests: `pytest`, one test file per source file, `tests/` mirrors `src/`
 - All SQL via sqlglot ASTs — if you're writing raw SQL strings, stop
 - Transformers: implement `discover()`, `expressions()`, and/or `query()`
 - Output: numpy by default (`__array__` protocol), optional arrow/pandas/polars
+- Docstrings: Google style, required on all public classes/functions
+- Type annotations: required on all function signatures (strict mode)
+
+## Toolchain
+
+| Tool | Purpose | Config location |
+|---|---|---|
+| `uv` | Package manager, virtualenv, lockfile | `pyproject.toml` |
+| `ruff` | Linting + formatting (replaces black, isort, flake8, pylint, bandit) | `pyproject.toml [tool.ruff]` |
+| `pyright` | Primary type checker (strict mode, Zed integration) | `pyproject.toml [tool.pyright]` |
+| `mypy` | Secondary type checker (strict mode, CI gate) | `pyproject.toml [tool.mypy]` |
+| `pytest` | Testing + coverage | `pyproject.toml [tool.pytest]` |
+| `pre-commit` | Git hooks (ruff + mypy + hygiene) | `.pre-commit-config.yaml` |
+
+### Quick commands
+
+```bash
+uv run ruff check src/ tests/        # lint
+uv run ruff format src/ tests/       # format
+uv run pyright src/                   # type check (primary)
+uv run mypy src/                      # type check (secondary)
+uv run pytest                         # test
+uv run pytest --cov                   # test with coverage
+```
+
+### Editor
+
+Zed project settings in `.zed/settings.json`:
+- Pyright LSP (strict mode, workspace diagnostics)
+- Ruff formatter on save (auto-fix + organize imports)
+- Ruler at column 99
 
 ## Current Status
 
-Pre-implementation. Milestone 1 (scaffolding) is the next step.
+Milestone 1 (scaffolding) in progress.
 See `docs/12-milestones.md` for the full roadmap.
 See `BACKLOG.md` for tracked items.

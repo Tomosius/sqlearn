@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=\"$CLAUDE_FILE_PATH\"; if [ -n \"$file\" ] && echo \"$file\" | grep -q '\\.py$'; then uv run ruff format \"$file\" 2>/dev/null && uv run ruff check --fix --silent \"$file\" 2>/dev/null; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
