@@ -58,7 +58,7 @@ FROM data
 
 | Encoder | Default Columns | Dynamic? | Schema Change? | SQL Pattern |
 |---|---|---|---|---|
-| `OneHotEncoder(max_categories=30, sparse=False)` | categorical | Yes | Yes | N `CASE WHEN col = 'val' THEN 1 ELSE 0 END` columns (dense by default — sklearn changed to dense in v1.2 because sparse caused too many downstream issues with models, numpy ops, and pandas) |
+| `OneHotEncoder(max_categories=30, sparse=False, encode_nan=False)` | categorical | Yes | Yes | N `CASE WHEN col = 'val' THEN 1 ELSE 0 END` columns (dense by default — sklearn changed to dense in v1.2 because sparse caused too many downstream issues with models, numpy ops, and pandas). When `encode_nan=True`, NaN gets its own column: `CASE WHEN col IS NULL THEN 1 ELSE 0 END AS col_nan` (instead of all-zeros row). Default `False` matches sklearn behavior. |
 | `OrdinalEncoder(order=)` | categorical | Yes | No | `CASE WHEN col = 'S' THEN 0 WHEN 'M' THEN 1 ... END` |
 | `TargetEncoder(smooth=)` | categorical | Yes | No | Smoothed target mean per category (needs `y`) |
 | `HashEncoder(n_bins=)` | categorical | No | No | `HASH(col) % n_bins` (zero-fit!) |

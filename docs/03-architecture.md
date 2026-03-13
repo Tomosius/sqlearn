@@ -136,7 +136,13 @@ class Transformer:
 
     def clone(self):
         """Create independent copy with same params + fitted state, new connection.
-        Safe for use in another thread."""
+        Safe for use in another thread. Unlike copy(), clone() creates a new
+        DuckDB connection — the clone is fully independent of the original."""
+        ...
+
+    def copy(self):
+        """Deep copy including fitted state AND shared connection reference.
+        Use clone() instead when you need thread-safe independence."""
         ...
 
     def freeze(self):
@@ -218,6 +224,32 @@ class Transformer:
                 "a thread-safe copy with the same fitted parameters."
             )
 
+    # ── Serialization ─────────────────────────────────────
+
+    def __getstate__(self):
+        """Null out DuckDB connection before pickling.
+        Connections are process-bound and cannot be serialized."""
+        state = self.__dict__.copy()
+        state["_connection"] = None
+        return state
+
+    def __setstate__(self, state):
+        """Restore from pickle, reconnect to DuckDB on demand."""
+        self.__dict__.update(state)
+        # Connection lazily re-created on next fit/transform call
+
+    # ── Display ───────────────────────────────────────────
+
+    def _repr_html_(self):
+        """Rich HTML repr for Jupyter notebooks.
+        Shows transformer name, params, fitted state, and column routing
+        in a formatted table."""
+        ...
+
+    def __repr__(self):
+        """Standard repr with params."""
+        ...
+
     # ── Operators ────────────────────────────────────────
 
     def __add__(self, other):
@@ -244,7 +276,7 @@ class Transformer:
 | `_validate_params` | Validation in `fit()` | Simpler, explicit |
 | `__sklearn_tags__` | Not needed | We only have transformers, not classifiers/regressors |
 | `MetaEstimatorMixin` | Pipeline just IS a Transformer | No marker needed |
-| `clone()` | `Transformer.clone()` method | Same mechanism, cleaner API |
+| `clone()` | `Transformer.clone()` method | Same mechanism, cleaner API. Also `copy()` for shared-connection deep copy |
 | N/A | `discover_sets()` for multi-row discovery | New — enables OneHotEncoder/TargetEncoder cleanly |
 | N/A | `_apply_expressions()` auto-passthrough | New — user returns only modified cols, base handles passthrough |
 | N/A | `freeze()` for deployment | New — immutable pre-compiled pipeline |

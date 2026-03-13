@@ -13,6 +13,29 @@ Every transformer gets:
 - **Roundtrip:** `fit → to_sql → execute manually → same result as transform`
 - **Clone:** `clone()` produces independent copy with identical transform output
 
+### Parameterized sklearn Equivalence Tests
+
+Use `@pytest.mark.parametrize` to systematically test sqlearn transformers against their
+sklearn equivalents. For each transformer: fit+transform with both libraries on identical
+data, compare outputs within tolerance (`np.allclose`).
+
+```python
+@pytest.mark.parametrize("sqlearn_cls,sklearn_cls,kwargs", [
+    (sq.StandardScaler, sklearn.StandardScaler, {}),
+    (sq.MinMaxScaler, sklearn.MinMaxScaler, {}),
+    (sq.RobustScaler, sklearn.RobustScaler, {}),
+    (sq.Imputer, sklearn.SimpleImputer, {"strategy": "mean"}),
+    (sq.Imputer, sklearn.SimpleImputer, {"strategy": "median"}),
+])
+def test_sklearn_equivalence(sqlearn_cls, sklearn_cls, kwargs, sample_data):
+    """sqlearn output must match sklearn within floating-point tolerance."""
+    sq_result = sqlearn_cls(**kwargs).fit_transform(sample_data)
+    sk_result = sklearn_cls(**kwargs).fit_transform(sample_data_numpy)
+    np.testing.assert_allclose(sq_result, sk_result, rtol=1e-6)
+```
+
+Cover edge cases: NaN columns, constant columns, single-row input.
+
 ### Pipeline Tests
 
 - Full pipeline output matches sklearn
@@ -451,6 +474,17 @@ Additional fixtures:
 - `tests/fixtures/lookup_table.parquet` — 50 rows for `sq.Lookup` tests
 - `tests/fixtures/2023.parquet`, `tests/fixtures/2024.parquet` — for concat tests
 - `tests/fixtures/large_sample.parquet` — 100K rows for performance benchmarks
+
+### Real Dataset Integration Tests
+
+Include a small real-world dataset (e.g., iris, tips, or similar public domain data) as a
+test fixture for end-to-end pipeline tests. Synthetic fixtures catch unit-level issues, but
+real data catches integration problems that minimal synthetic data misses:
+
+- Full pipeline end-to-end on realistic data distributions
+- Column type inference on real-world messy types
+- Edge cases that only appear in production data (mixed nulls, rare categories, etc.)
+- Regression guard: output shape and values should not change between releases
 
 ### Pro Studio Tests (license-gated, same repo)
 
