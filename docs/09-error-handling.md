@@ -11,7 +11,17 @@ class SchemaError(SQLearnError): ...          # column missing, type mismatch
 class FitError(SQLearnError): ...             # all-NULL column, empty table
 class CompilationError(SQLearnError): ...     # can't compile to target dialect
 class UnseenCategoryError(SQLearnError): ...  # new category at transform time
+class ClassificationError(SQLearnError): ...  # static/dynamic mismatch
+class StaticViolationError(SQLearnError): ... # static step reads params_
+class FrozenError(SQLearnError): ...          # fit() on frozen pipeline
+class MissingColumnError(SchemaError): ...    # column not found (fuzzy match)
+class InvalidStepError(SQLearnError): ...     # invalid pipeline step
 ```
+
+**Naming convention:** Error names describe the *problem*, not the location.
+`MissingColumnError` over `ColumnNotFoundError`. `NotFittedError` over
+`FitRequiredError`. Each error class includes actionable guidance in its message.
+
 
 **Helpful messages:**
 

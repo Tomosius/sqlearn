@@ -207,7 +207,26 @@ Cover edge cases: NaN columns, constant columns, single-row input.
 - `sq.Lookup` with nonexistent join key → `SchemaError`
 - `sq.Lookup` as pipeline step → CTE in compiled SQL
 
+### Feature Name Stability Tests
+
+- Fit the same transformer twice on identical data → assert identical output column names
+- Fit → clone → fit clone → assert same feature names (deterministic across instances)
+- OneHotEncoder category order must be deterministic (alphabetical sort)
+
 ### Property-Based Tests (hypothesis)
+
+Use `hypothesis` for fuzzing transformer inputs. Ensures transformers and SQL generation
+never crash on any valid input, including edge cases humans wouldn't think to test.
+
+```python
+from hypothesis import given, strategies as st
+
+@given(st.lists(st.floats(allow_nan=True, allow_infinity=False), min_size=1, max_size=100))
+def test_standard_scaler_never_crashes(values):
+    """StandardScaler must handle any valid float list without crashing."""
+    # Create table, fit, transform — no exceptions allowed
+    ...
+```
 
 - `inverse_transform(transform(X)) ≈ X` for invertible transforms
 - `transform(fit(X)) + transform(fit(X))` → identical (deterministic)
@@ -363,6 +382,41 @@ def test_filter_matches_subset(agg, fold_size, sample_data):
     assert_close(execute(filtered), execute(subset))
 ```
 
+### Mutation Testing (mutmut)
+
+Tier 3 testing: `make test-full` runs `mutmut` to verify test quality. mutmut generates
+code mutations (e.g., `>` → `>=`, `+` → `-`, `True` → `False`) and verifies that tests
+detect every mutation. Especially important for SQL generation code where a subtle
+operator change could produce valid but incorrect SQL.
+
+```bash
+# Run mutation testing on source code
+uv run mutmut run --paths-to-mutate=src/sqlearn/
+
+# View surviving mutants (tests that didn't catch the mutation)
+uv run mutmut results
+```
+
+Focus mutation testing on:
+- `compiler.py` — expression composition logic
+- `expressions()` methods — arithmetic operators, CASE expressions
+- `discover()` methods — aggregate function selection
+- Schema change detection logic
+
+### DuckDB CSV Loading Note
+
+When loading CSV data for category discovery tests, use `all_varchar=TRUE` to force all
+columns to VARCHAR. This prevents DuckDB's type inference from silently converting
+categorical-looking data to integers, which would cause category discovery to miss values.
+
+```python
+# BAD: DuckDB might infer "1", "2", "3" as INTEGER, losing category semantics
+duckdb.sql("SELECT * FROM 'data.csv'")
+
+# GOOD: All columns loaded as VARCHAR, explicit Cast() where needed
+duckdb.sql("SELECT * FROM read_csv('data.csv', all_varchar=TRUE)")
+```
+
 ### Version Matrix CI Tests
 
 Test against multiple versions of dependencies to catch breaking changes:
@@ -447,6 +501,16 @@ releases. The version matrix catches incompatibilities before users file bugs.
 - Trial expiry: after 14 days, Pro features re-lock gracefully
 - License state persisted in `~/.sqlearn/license.key`
 - No internet required for license validation (offline RSA)
+
+### sklearn Compatibility Tests
+
+- `get_params(deep=True)` returns all `__init__` params as dict
+- `set_params(**params)` correctly sets params, including nested `__` notation
+- `__sklearn_is_fitted__()` returns correct boolean for sklearn's `check_is_fitted()`
+- `clone()` produces unfitted copy with same constructor args
+- Serialization roundtrip: `pickle.dumps(pipe)` + `pickle.loads()` preserves fitted state
+- Serialization nulls connection: `pickle.loads(pickled).connection_ is None`
+- joblib roundtrip: `joblib.dump(pipe)` + `joblib.load()` preserves categories and params
 
 ### Test Fixture
 
