@@ -481,4 +481,3 @@ Additional fixtures:
 - Model fitting from UI: train → results match training in Python script
 
 ---
-

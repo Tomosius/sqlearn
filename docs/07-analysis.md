@@ -1558,4 +1558,3 @@ pipe.fit("data", y="target", suppress_warnings=["high_cardinality", "identifier"
 ```
 
 ---
-

@@ -1102,4 +1102,3 @@ sq.autopipeline("data.parquet", target="price")    # generate a complete Pipelin
 ```
 
 ---
-

@@ -76,4 +76,3 @@ pipe.detect_drift("new_data.parquet", thresholds={
 })
 ```
 ---
-

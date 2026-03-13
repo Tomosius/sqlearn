@@ -291,4 +291,3 @@ This is not a special mode. It's just how SQL works. The pipeline compiles to on
 query, DuckDB executes it however it wants (in-memory, spill to disk, stream from S3).
 
 ---
-

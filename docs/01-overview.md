@@ -132,4 +132,3 @@ model = XGBClassifier().fit(X, y)
 **Name: `sqlearn`** — `sk` → `sq`. SQL-first. `import sqlearn as sq`.
 
 ---
-

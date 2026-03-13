@@ -207,4 +207,3 @@ or public-facing deployment. The Studio API endpoints accept SQL-like filter exp
 from the frontend — this is safe because the frontend is local and trusted.
 
 ---
-

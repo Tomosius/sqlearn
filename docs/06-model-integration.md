@@ -758,4 +758,3 @@ MF = fast_explore=True. Result: 17x faster than sklearn/Optuna.
 ```
 
 ---
-

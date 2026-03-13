@@ -380,4 +380,3 @@ async def export_project(request):
 6. **One repo protects simplicity.** No cross-repo dependencies, no version
    mismatches, no "which package do I install?" confusion. Pro is just a
    license key away.
-

@@ -772,4 +772,3 @@ full = cleanup + features   # → flat Pipeline with all steps
 | `Lookup` | N/A (sklearn has no equivalent) | Join features from another table mid-pipeline |
 
 ---
-

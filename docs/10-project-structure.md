@@ -224,4 +224,3 @@ dev = ["pytest", "pytest-cov", "ruff", "mypy", "hypothesis", "scikit-learn"]
 ```
 
 ---
-
