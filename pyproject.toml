@@ -1,0 +1,219 @@
+[project]
+name = "sqlearn"
+version = "0.0.1"
+description = "Compile ML preprocessing pipelines to SQL via sqlglot ASTs"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Tomosius" }]
+keywords = ["sql", "machine-learning", "preprocessing", "pipeline", "sqlglot", "duckdb"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "duckdb>=1.0",
+    "sqlglot>=25.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.5"]
+polars = ["polars>=0.20"]
+arrow = ["pyarrow>=12.0"]
+sparse = ["scipy>=1.10"]
+plot = ["matplotlib>=3.7"]
+optuna = ["optuna>=3.0"]
+yaml = ["pyyaml>=6.0"]
+studio = [
+    "starlette>=0.27",
+    "uvicorn>=0.22",
+    "websockets>=11.0",
+    "plotly>=5.15",
+    "nbformat>=5.9",
+]
+all = ["sqlearn[pandas,polars,arrow,sparse,plot,optuna,yaml]"]
+
+[project.urls]
+Homepage = "https://github.com/Tomosius/sqlearn"
+Repository = "https://github.com/Tomosius/sqlearn"
+Issues = "https://github.com/Tomosius/sqlearn/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sqlearn"]
+
+# =============================================================================
+# Ruff — formatting + linting (replaces black, isort, flake8, pylint, bandit)
+# =============================================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 99
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "C90",    # mccabe complexity
+    "I",      # isort
+    "N",      # pep8-naming
+    "D",      # pydocstyle
+    "UP",     # pyupgrade
+    "ANN",    # flake8-annotations
+    "S",      # flake8-bandit (security)
+    "B",      # flake8-bugbear
+    "A",      # flake8-builtins
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "G",      # flake8-logging-format
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "SLF",    # flake8-self
+    "SIM",    # flake8-simplify
+    "TID",    # flake8-tidy-imports
+    "TC",     # flake8-type-checking
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib
+    "PL",     # pylint (all: PLC, PLE, PLR, PLW)
+    "TRY",    # tryceratops
+    "FLY",    # flynt
+    "PERF",   # perflint
+    "FURB",   # refurb
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "D100",    # missing docstring in public module (too noisy early on)
+    "D104",    # missing docstring in public package
+    "D107",    # missing docstring in __init__
+    "TRY003",  # avoid specifying long messages outside exception class
+    "ISC001",  # conflicts with ruff formatter
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",    # assert is fine in tests
+    "ANN",     # no type annotations required in tests
+    "D",       # no docstrings required in tests
+    "ARG",     # unused arguments fine in fixtures
+    "PLR2004", # magic values fine in tests
+    "SLF001",  # private member access fine in tests
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sqlearn"]
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = 79
+
+# =============================================================================
+# Pyright — primary type checker (strict mode)
+# =============================================================================
+[tool.pyright]
+pythonVersion = "3.10"
+pythonPlatform = "All"
+typeCheckingMode = "strict"
+include = ["src"]
+exclude = ["tests"]
+reportMissingTypeStubs = "warning"
+reportUnnecessaryTypeIgnoreComment = true
+reportDeprecated = true
+
+# =============================================================================
+# Mypy — secondary type checker (strict mode, CI gate)
+# =============================================================================
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_any_generics = true
+no_implicit_optional = true
+no_implicit_reexport = true
+show_error_codes = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["duckdb.*", "sqlglot.*"]
+ignore_missing_imports = true
+
+# =============================================================================
+# Pytest — testing
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests requiring DuckDB",
+]
+filterwarnings = [
+    "error",
+]
+
+# =============================================================================
+# Coverage
+# =============================================================================
+[tool.coverage.run]
+source = ["sqlearn"]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "@overload",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pyright>=1.1.408",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.6",
+]
