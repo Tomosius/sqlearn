@@ -23,11 +23,11 @@ classifiers = [
 ]
 dependencies = [
     "duckdb>=1.0",
+    "numpy>=1.24",
     "sqlglot[rs]>=25.0",
 ]
 
 [project.optional-dependencies]
-numpy = ["numpy>=1.24"]
 pandas = ["pandas>=1.5"]
 polars = ["polars>=0.20"]
 arrow = ["pyarrow>=12.0"]

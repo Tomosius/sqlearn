@@ -84,7 +84,7 @@ No core changes needed. All transformers compose from `stats/aggregates.py` buil
 
 ## Dependencies
 
-Core: `duckdb>=1.0`, `sqlglot>=25.0`, `numpy>=1.24` (that's it)
+Core: `duckdb>=1.0`, `numpy>=1.24`, `sqlglot[rs]>=25.0` (that's it)
 
 Optional extras: `pandas`, `polars`, `arrow`, `sparse`, `plot` (matplotlib),
 `optuna`, `yaml` (pyyaml), `studio` (starlette + uvicorn + websockets + plotly + nbformat)
