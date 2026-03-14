@@ -115,11 +115,15 @@ max-complexity = 10
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
+"src/sqlearn/core/transformer.py" = [
+    "ARG002",  # base class interface methods have unused params by design
+]
 "tests/**/*.py" = [
     "S101",    # assert is fine in tests
     "ANN",     # no type annotations required in tests
     "D",       # no docstrings required in tests
     "ARG",     # unused arguments fine in fixtures
+    "PLC0415", # imports inside test functions fine (testing exports)
     "PLR2004", # magic values fine in tests
     "SLF001",  # private member access fine in tests
 ]
@@ -185,6 +189,8 @@ markers = [
 ]
 filterwarnings = [
     "error",
+    "ignore:sqlglotrs is deprecated:DeprecationWarning",
+    "ignore:sqlglot\\[rs\\] is deprecated:UserWarning",
 ]
 
 # =============================================================================

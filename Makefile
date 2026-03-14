@@ -31,7 +31,7 @@ interrogate: ## Check docstring coverage (95% minimum)
 	uv run interrogate src/sqlearn/
 
 vulture: ## Detect dead code
-	uv run vulture src/sqlearn/
+	uv run vulture src/sqlearn/ vulture_whitelist.py
 
 ## ─── Testing (3-tier) ────────────────────────────────────────────────────────
 

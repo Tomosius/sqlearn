@@ -26,7 +26,7 @@ repos:
     rev: v2.14
     hooks:
       - id: vulture
-        args: [src/sqlearn/, --min-confidence=80]
+        args: [src/sqlearn/, vulture_whitelist.py, --min-confidence=80]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
