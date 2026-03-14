@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from sqlearn.core.schema import Schema
+from sqlearn.core.schema import (
+    BOOLEAN_TYPES,
+    CATEGORICAL_TYPES,
+    NUMERIC_TYPES,
+    TEMPORAL_TYPES,
+    Schema,
+    _classify_type,
+    _normalize_type,
+)
 
 
 class TestSchemaConstruction:
@@ -232,3 +240,197 @@ class TestSchemaSelect:
         s = Schema({"a": "INT"})
         with pytest.raises(KeyError, match="not found"):
             s.select(["missing"])
+
+
+class TestNormalizeType:
+    """Test _normalize_type() helper."""
+
+    def test_simple_type(self) -> None:
+        """Simple type passes through uppercased."""
+        assert _normalize_type("double") == "DOUBLE"
+
+    def test_parameterized_type(self) -> None:
+        """Parameters are stripped."""
+        assert _normalize_type("DECIMAL(18,3)") == "DECIMAL"
+
+    def test_whitespace(self) -> None:
+        """Leading/trailing whitespace is stripped."""
+        assert _normalize_type("  varchar  ") == "VARCHAR"
+
+    def test_parameterized_with_spaces(self) -> None:
+        """Parameters with spaces are stripped."""
+        assert _normalize_type("DECIMAL( 18, 3 )") == "DECIMAL"
+
+
+class TestClassifyType:
+    """Test _classify_type() helper."""
+
+    @pytest.mark.parametrize(
+        "sql_type",
+        [
+            "INTEGER",
+            "INT",
+            "BIGINT",
+            "DOUBLE",
+            "FLOAT",
+            "DECIMAL",
+            "DECIMAL(18,3)",
+            "REAL",
+            "SMALLINT",
+            "HUGEINT",
+        ],
+    )
+    def test_numeric_types(self, sql_type: str) -> None:
+        """Numeric SQL types classify as 'numeric'."""
+        assert _classify_type(sql_type) == "numeric"
+
+    @pytest.mark.parametrize(
+        "sql_type",
+        [
+            "VARCHAR",
+            "TEXT",
+            "STRING",
+            "CHAR",
+            "ENUM",
+        ],
+    )
+    def test_categorical_types(self, sql_type: str) -> None:
+        """Categorical SQL types classify as 'categorical'."""
+        assert _classify_type(sql_type) == "categorical"
+
+    @pytest.mark.parametrize(
+        "sql_type",
+        [
+            "DATE",
+            "TIME",
+            "TIMESTAMP",
+            "TIMESTAMPTZ",
+            "INTERVAL",
+            "TIMESTAMP WITH TIME ZONE",
+        ],
+    )
+    def test_temporal_types(self, sql_type: str) -> None:
+        """Temporal SQL types classify as 'temporal'."""
+        assert _classify_type(sql_type) == "temporal"
+
+    @pytest.mark.parametrize("sql_type", ["BOOLEAN", "BOOL", "LOGICAL"])
+    def test_boolean_types(self, sql_type: str) -> None:
+        """Boolean SQL types classify as 'boolean'."""
+        assert _classify_type(sql_type) == "boolean"
+
+    @pytest.mark.parametrize("sql_type", ["BLOB", "JSON", "UUID", "STRUCT"])
+    def test_other_types(self, sql_type: str) -> None:
+        """Unknown SQL types classify as 'other'."""
+        assert _classify_type(sql_type) == "other"
+
+    def test_case_insensitive(self) -> None:
+        """Classification is case-insensitive."""
+        assert _classify_type("double") == "numeric"
+        assert _classify_type("Varchar") == "categorical"
+
+
+class TestSchemaColumnCategory:
+    """Test Schema.column_category() method."""
+
+    def test_numeric(self) -> None:
+        """Numeric column returns 'numeric'."""
+        s = Schema({"price": "DOUBLE"})
+        assert s.column_category("price") == "numeric"
+
+    def test_categorical(self) -> None:
+        """VARCHAR column returns 'categorical'."""
+        s = Schema({"city": "VARCHAR"})
+        assert s.column_category("city") == "categorical"
+
+    def test_temporal(self) -> None:
+        """TIMESTAMP column returns 'temporal'."""
+        s = Schema({"created": "TIMESTAMP"})
+        assert s.column_category("created") == "temporal"
+
+    def test_boolean(self) -> None:
+        """BOOLEAN column returns 'boolean'."""
+        s = Schema({"active": "BOOLEAN"})
+        assert s.column_category("active") == "boolean"
+
+    def test_other(self) -> None:
+        """Unknown type returns 'other'."""
+        s = Schema({"data": "BLOB"})
+        assert s.column_category("data") == "other"
+
+    def test_parameterized(self) -> None:
+        """Parameterized type is normalized before classification."""
+        s = Schema({"amount": "DECIMAL(18,3)"})
+        assert s.column_category("amount") == "numeric"
+
+    def test_missing_raises(self) -> None:
+        """Missing column raises KeyError."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(KeyError, match="not found"):
+            s.column_category("missing")
+
+
+class TestSchemaFilterMethods:
+    """Test Schema.numeric(), .categorical(), .temporal(), .boolean()."""
+
+    @pytest.fixture
+    def mixed_schema(self) -> Schema:
+        """Schema with all type categories."""
+        return Schema(
+            {
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+                "name": "TEXT",
+                "created": "TIMESTAMP",
+                "active": "BOOLEAN",
+                "data": "BLOB",
+            }
+        )
+
+    def test_numeric(self, mixed_schema: Schema) -> None:
+        """numeric() returns numeric columns in order."""
+        assert mixed_schema.numeric() == ["price", "qty"]
+
+    def test_categorical(self, mixed_schema: Schema) -> None:
+        """categorical() returns categorical columns in order."""
+        assert mixed_schema.categorical() == ["city", "name"]
+
+    def test_temporal(self, mixed_schema: Schema) -> None:
+        """temporal() returns temporal columns in order."""
+        assert mixed_schema.temporal() == ["created"]
+
+    def test_boolean(self, mixed_schema: Schema) -> None:
+        """boolean() returns boolean columns in order."""
+        assert mixed_schema.boolean() == ["active"]
+
+    def test_empty_category(self) -> None:
+        """Filter method returns empty list when no columns match."""
+        s = Schema({"price": "DOUBLE"})
+        assert s.categorical() == []
+
+
+class TestTypeCategorySets:
+    """Test that type category frozensets are complete and non-overlapping."""
+
+    def test_no_overlap(self) -> None:
+        """No type string belongs to multiple categories."""
+        all_sets = [NUMERIC_TYPES, CATEGORICAL_TYPES, TEMPORAL_TYPES, BOOLEAN_TYPES]
+        for i, a in enumerate(all_sets):
+            for b in all_sets[i + 1 :]:
+                overlap = a & b
+                assert not overlap, f"Overlap: {overlap}"
+
+    def test_core_numeric_types_present(self) -> None:
+        """Common numeric types are in NUMERIC_TYPES."""
+        for t in ("INTEGER", "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL"):
+            assert t in NUMERIC_TYPES
+
+    def test_core_categorical_types_present(self) -> None:
+        """Common categorical types are in CATEGORICAL_TYPES."""
+        for t in ("VARCHAR", "TEXT", "STRING"):
+            assert t in CATEGORICAL_TYPES
+
+    def test_core_temporal_types_present(self) -> None:
+        """Common temporal types are in TEMPORAL_TYPES."""
+        for t in ("DATE", "TIME", "TIMESTAMP"):
+            assert t in TEMPORAL_TYPES
