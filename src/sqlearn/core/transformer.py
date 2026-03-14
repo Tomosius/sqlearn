@@ -222,6 +222,57 @@ class Transformer:
             return "dynamic"
         return "static"
 
+    # --- Display ---
+
+    def __repr__(self) -> str:
+        """Return sklearn-style repr showing non-default parameters.
+
+        Returns:
+            String like ``ClassName(param=value, ...)``.
+        """
+        sig = inspect.signature(type(self).__init__)
+        parts: list[str] = []
+        for name, param in sig.parameters.items():
+            if name == "self":
+                continue
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            value = getattr(self, name)
+            if value != param.default:
+                parts.append(f"{name}={value!r}")
+        return f"{type(self).__name__}({', '.join(parts)})"
+
+    def _repr_html_(self) -> str:
+        """Return HTML representation for Jupyter notebooks.
+
+        Returns:
+            HTML string with class name, parameters, and fitted status.
+        """
+        fitted_str = "fitted" if self._fitted else "not fitted"
+        params = self.get_params()
+        params_str = ", ".join(f"{k}={v!r}" for k, v in params.items())
+        return f"<div><strong>{type(self).__name__}</strong>({params_str}) [{fitted_str}]</div>"
+
+    def get_feature_names_out(self) -> list[str]:
+        """Return output feature names after fitting.
+
+        Returns:
+            List of column names from the output schema.
+
+        Raises:
+            ValueError: If transformer is not fitted.
+        """
+        if not self._fitted:
+            msg = f"{type(self).__name__} is not fitted"
+            raise ValueError(msg)
+        if self.output_schema_ is None:
+            msg = "output_schema_ is not set"
+            raise ValueError(msg)
+        return list(self.output_schema_.columns.keys())
+
     # --- sklearn introspection ---
 
     def get_params(self, deep: bool = True) -> dict[str, Any]:

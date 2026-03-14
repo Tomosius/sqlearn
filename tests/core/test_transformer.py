@@ -347,3 +347,63 @@ class TestSetParams:
         t2 = _DynamicTransformer()
         t2.set_params(**params)
         assert t2.get_params() == params
+
+
+class TestTransformerRepr:
+    """Test __repr__ and _repr_html_ display methods."""
+
+    def test_repr_no_params(self) -> None:
+        t = _StaticTransformer()
+        assert repr(t) == "_StaticTransformer()"
+
+    def test_repr_with_columns(self) -> None:
+        t = _StaticTransformer(columns=["price"])
+        assert repr(t) == "_StaticTransformer(columns=['price'])"
+
+    def test_repr_subclass(self) -> None:
+        t = _DynamicTransformer(scale=2.0)
+        assert repr(t) == "_DynamicTransformer(scale=2.0)"
+
+    def test_repr_all_defaults(self) -> None:
+        t = _DynamicTransformer()
+        assert repr(t) == "_DynamicTransformer()"
+
+    def test_repr_multiple_non_defaults(self) -> None:
+        t = _DynamicTransformer(scale=3.0, columns="all")
+        r = repr(t)
+        assert "scale=3.0" in r
+        assert "columns='all'" in r
+
+    def test_repr_html(self) -> None:
+        t = _StaticTransformer()
+        html = t._repr_html_()
+        assert "_StaticTransformer" in html
+        assert "not fitted" in html
+
+    def test_repr_html_fitted(self) -> None:
+        t = _StaticTransformer()
+        t._fitted = True
+        html = t._repr_html_()
+        assert "fitted" in html
+        assert "not fitted" not in html
+
+
+class TestGetFeatureNamesOut:
+    """Test get_feature_names_out() method."""
+
+    def test_returns_column_names(self) -> None:
+        t = _StaticTransformer()
+        t._fitted = True
+        t.output_schema_ = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        assert t.get_feature_names_out() == ["price", "city"]
+
+    def test_not_fitted_raises(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(ValueError, match="not fitted"):
+            t.get_feature_names_out()
+
+    def test_preserves_order(self) -> None:
+        t = _StaticTransformer()
+        t._fitted = True
+        t.output_schema_ = Schema({"b": "INT", "a": "VARCHAR", "c": "DOUBLE"})
+        assert t.get_feature_names_out() == ["b", "a", "c"]
