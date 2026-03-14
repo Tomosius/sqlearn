@@ -5,3 +5,4 @@
 y_column  # noqa
 exprs  # noqa
 input_query  # noqa
+deep  # noqa — get_params(deep=True) used when Pipeline supports nested params

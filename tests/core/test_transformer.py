@@ -290,3 +290,60 @@ class TestClassify:
     def test_base_transformer_auto_static(self) -> None:
         t = Transformer()
         assert t._classify() == "static"
+
+
+class TestGetParams:
+    """Test get_params() sklearn-compatible introspection."""
+
+    def test_base_transformer(self) -> None:
+        t = _StaticTransformer()
+        params = t.get_params()
+        assert params == {"columns": None}
+
+    def test_with_columns(self) -> None:
+        t = _StaticTransformer(columns=["price"])
+        params = t.get_params()
+        assert params == {"columns": ["price"]}
+
+    def test_subclass_params(self) -> None:
+        t = _DynamicTransformer(scale=2.0, columns=["price"])
+        params = t.get_params()
+        assert params == {"scale": 2.0, "columns": ["price"]}
+
+    def test_subclass_defaults(self) -> None:
+        t = _DynamicTransformer()
+        params = t.get_params()
+        assert params == {"scale": 1.0, "columns": None}
+
+
+class TestSetParams:
+    """Test set_params() sklearn-compatible parameter setting."""
+
+    def test_set_columns(self) -> None:
+        t = _StaticTransformer()
+        result = t.set_params(columns=["price"])
+        assert t.columns == ["price"]
+        assert result is t
+
+    def test_set_subclass_param(self) -> None:
+        t = _DynamicTransformer()
+        t.set_params(scale=3.0)
+        assert t.scale == 3.0
+
+    def test_set_multiple(self) -> None:
+        t = _DynamicTransformer()
+        t.set_params(scale=5.0, columns=["qty"])
+        assert t.scale == 5.0
+        assert t.columns == ["qty"]
+
+    def test_invalid_param_raises(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(ValueError, match="Invalid parameter"):
+            t.set_params(nonexistent=True)
+
+    def test_roundtrip(self) -> None:
+        t = _DynamicTransformer(scale=2.5, columns=["a", "b"])
+        params = t.get_params()
+        t2 = _DynamicTransformer()
+        t2.set_params(**params)
+        assert t2.get_params() == params

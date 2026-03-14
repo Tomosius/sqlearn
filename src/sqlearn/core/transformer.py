@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -220,3 +221,51 @@ class Transformer:
         if has_discover or has_discover_sets:
             return "dynamic"
         return "static"
+
+    # --- sklearn introspection ---
+
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        """Return __init__ parameters as dict. sklearn-compatible.
+
+        Introspects the subclass __init__ signature. Parameters are
+        retrieved via getattr, matching sklearn convention.
+
+        Args:
+            deep: If True, returns params for nested transformers
+                using '__' separator. Not used until Pipeline lands.
+
+        Returns:
+            Dict of parameter names to current values.
+        """
+        sig = inspect.signature(type(self).__init__)
+        params: dict[str, Any] = {}
+        for name, param in sig.parameters.items():
+            if name == "self":
+                continue
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            params[name] = getattr(self, name)
+        return params
+
+    def set_params(self, **params: object) -> Transformer:
+        """Set parameters. Returns self. sklearn-compatible.
+
+        Args:
+            **params: Parameter names and values to set.
+
+        Returns:
+            self (for method chaining).
+
+        Raises:
+            ValueError: If any parameter name is not a valid __init__ param.
+        """
+        valid_params = self.get_params()
+        for key, value in params.items():
+            if key not in valid_params:
+                msg = f"Invalid parameter {key!r} for {type(self).__name__}"
+                raise ValueError(msg)
+            setattr(self, key, value)
+        return self
