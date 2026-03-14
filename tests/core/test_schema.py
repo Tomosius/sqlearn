@@ -658,3 +658,42 @@ class TestResolveColumns:
         """None raises ValueError."""
         with pytest.raises(ValueError, match="None"):
             resolve_columns(schema, None)
+
+
+class TestExports:
+    """Test that public API is exported correctly."""
+
+    def test_schema_from_core(self) -> None:
+        """Schema is importable from sqlearn.core."""
+        import sqlearn.core
+
+        assert sqlearn.core.Schema is Schema
+
+    def test_schema_from_package(self) -> None:
+        """Schema is importable from sqlearn."""
+        import sqlearn
+
+        assert sqlearn.Schema is Schema
+
+    def test_selectors_from_package(self) -> None:
+        """Selector factories are importable from sqlearn."""
+        import sqlearn
+
+        assert sqlearn.numeric is numeric
+        assert sqlearn.categorical is categorical
+        assert sqlearn.temporal is temporal
+        assert sqlearn.boolean is boolean
+        assert sqlearn.matching is matching
+        assert sqlearn.dtype is dtype
+
+    def test_column_selector_from_package(self) -> None:
+        """ColumnSelector base class is importable from sqlearn."""
+        import sqlearn
+
+        assert sqlearn.ColumnSelector is ColumnSelector
+
+    def test_resolve_columns_not_in_package(self) -> None:
+        """resolve_columns is internal, not in sqlearn namespace."""
+        import sqlearn
+
+        assert not hasattr(sqlearn, "resolve_columns")
