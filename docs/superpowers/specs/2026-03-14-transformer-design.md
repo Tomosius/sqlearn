@@ -51,7 +51,7 @@ class Transformer:
 
 | Attribute | Type | Purpose |
 |-----------|------|---------|
-| `_columns_spec` | `str \| list[str] \| ColumnSelector \| None` | User's `columns=` override, stored until fit resolves it. |
+| `columns` | `str \| list[str] \| ColumnSelector \| None` | User's `columns=` parameter, stored as-is. Matches `__init__` param name for `get_params()` compatibility (sklearn convention). Distinct from fitted `columns_` (trailing underscore). |
 | `_fitted` | `bool` | Whether `fit()` has been called. Starts `False`. |
 | `_owner_thread` | `int \| None` | Thread ID from first `fit()`/`transform()` call. |
 | `_owner_pid` | `int \| None` | Process ID from first `fit()`/`transform()` call. |
@@ -216,7 +216,7 @@ def _apply_expressions(self, exprs: dict[str, exp.Expression]) -> dict[str, exp.
 def _resolve_columns_spec(self) -> str | list[str] | ColumnSelector | None:
     """Return the effective column spec (user override or class default).
 
-    Returns _columns_spec if user passed columns=, else _default_columns.
+    Returns self.columns if user passed columns=, else _default_columns.
     Actual resolution against schema happens at fit time via resolve_columns().
     """
 ```
