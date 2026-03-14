@@ -24,6 +24,12 @@ def plan_fit(
 ) -> FitPlan
 ```
 
+### Column Resolution
+
+`plan_fit()` resolves columns for each step internally. It uses `step._resolve_columns_spec()` (from the Transformer base class) against the current schema to get the list of columns each step targets. This resolved list is stored in `StepInfo.columns` and passed to `classify_step()` and `detect_schema_change()`.
+
+As steps are processed, the schema propagates: each step's `output_schema()` produces the input schema for the next step. This means column resolution happens against the correct schema at each point in the pipeline.
+
 ### Step Classification
 
 Follows the three-tier model from docs/03-architecture.md Section 4.3:
@@ -31,7 +37,7 @@ Follows the three-tier model from docs/03-architecture.md Section 4.3:
 | Tier | Condition | Behavior |
 |---|---|---|
 | 1 | Built-in, `_classification` set | Trust immediately, zero cost |
-| 2 | Custom, `_classification` set | Verify once on first fit via `discover()` call |
+| 2 | Custom, `_classification` set | Verify once on first fit via `discover()` + `discover_sets()` call |
 | 3 | Custom, `_classification` is None | Full conservative inspection every fit |
 
 Classification helper:
@@ -48,10 +54,10 @@ def classify_step(
 ### Schema Change Detection
 
 ```python
-def detect_schema_change(step: Transformer, input_schema: Schema) -> bool
+def detect_schema_change(step: Transformer, input_schema: Schema) -> SchemaChangeResult
 ```
 
-Calls `output_schema()`, compares input vs output. Conservative — if it can't determine the answer, assumes the schema changes.
+Calls `output_schema()`, compares input vs output. Returns a `SchemaChangeResult` with both the boolean and a human-readable reason for the audit trail. Conservative — if it can't determine the answer, assumes the schema changes.
 
 ### Layer Grouping Rule
 
@@ -75,18 +81,24 @@ Static steps never create boundaries. Static + schema-changing doesn't create a 
 ```python
 @dataclass(frozen=True)
 class StepClassification:
-    kind: str          # "static" | "dynamic"
-    tier: int          # 1, 2, or 3
-    reason: str        # human-readable for audit trail
+    kind: str               # "static" | "dynamic"
+    tier: int               # 1, 2, or 3
+    reason: str             # human-readable for audit trail
+    warnings: list[str]     # UserWarning messages for ambiguous cases (e.g. "declared dynamic but discover() returned {}")
+
+@dataclass(frozen=True)
+class SchemaChangeResult:
+    changes: bool           # True if output schema differs from input
+    reason: str             # human-readable explanation for audit trail
 
 @dataclass
 class StepInfo:
     step: Transformer
     classification: StepClassification
-    schema_changes: bool
-    columns: list[str]          # resolved columns for this step
+    schema_change: SchemaChangeResult
+    columns: list[str]          # resolved columns for this step (resolved by plan_fit via step._resolve_columns_spec + schema)
     input_schema: Schema
-    output_schema: Schema
+    step_output_schema: Schema  # output schema after this step (renamed to avoid collision with Transformer.output_schema method)
 
 @dataclass
 class Layer:
@@ -129,7 +141,7 @@ The `current_exprs` parameter carries composed expressions accumulated from prio
 class FitQueries:
     aggregate_query: exp.Expression | None   # batched scalar aggregates, None if all static
     set_queries: dict[str, exp.Expression]   # step_name -> set discovery query
-    param_mapping: dict[str, str]            # maps aggregate alias -> (step_name, param_name)
+    param_mapping: dict[str, tuple[str, str]] # maps aggregate alias -> (step_name, param_name)
 ```
 
 ## Phase 3: compose_transform() — Expression Composition
@@ -140,9 +152,12 @@ class FitQueries:
 def compose_transform(
     steps: list[Transformer],
     source: str,
-    dialect: str = "duckdb",
 ) -> exp.Select
 ```
+
+**Note:** The compiler returns a sqlglot AST, not a SQL string. Dialect transpilation happens in pipeline.py via `query.sql(dialect=...)`. This keeps the compiler dialect-agnostic.
+
+**Precondition:** All steps passed to `compose_transform` must be fitted (i.e., `step._fitted is True` for dynamic steps). The compiler does not validate fitness — if an unfitted dynamic step's `expressions()` reads `self.params_` and fails, the error propagates as-is. Pipeline.py is responsible for ensuring steps are fitted before calling this.
 
 ### Algorithm
 
@@ -174,6 +189,8 @@ Each expression's nesting depth is tracked. When a step would exceed the thresho
 | Column name collision in merge | `SchemaError` |
 | Empty pipeline (no steps) | `CompilationError` |
 | Step produces no output columns | `SchemaError` |
+| `discover()` returns non-dict values for AST entries | `CompilationError` |
+| Tier 2 static declared but discover()/discover_sets() non-empty | `ClassificationError` |
 
 ## Edge Cases
 
@@ -199,20 +216,22 @@ The dataclasses (`FitPlan`, `StepClassification`, `StepInfo`, `Layer`, `FitQueri
 
 Using mock transformers with hardcoded `discover()`/`expressions()` returns. No DuckDB needed.
 
-### classify_step tests (~12)
+### classify_step tests (~14)
 
 1. Tier 1 built-in static → trusted, returns `"static"`
 2. Tier 1 built-in dynamic → trusted, returns `"dynamic"`
 3. Tier 2 custom declared static, `discover()` returns `{}` → verified, cached
 4. Tier 2 custom declared static, `discover()` returns non-empty → `ClassificationError`
-5. Tier 2 custom declared dynamic, `discover()` returns `{}` → warning, honors declaration
-6. Tier 2 verified flag skips re-verification
-7. Tier 3 undeclared, `discover()` returns `{}` → static
-8. Tier 3 undeclared, `discover()` returns non-empty → dynamic
-9. Tier 3 `discover()` raises → dynamic fallback
-10. Tier 3 `discover()` returns `None` → dynamic fallback
-11. Tier 3 `discover_sets()` returns non-empty → dynamic
-12. Tier 3 overrides `fit()` → dynamic
+5. Tier 2 custom declared static, `discover_sets()` returns non-empty → `ClassificationError`
+6. Tier 2 custom declared dynamic, `discover()` returns `{}` → warning, honors declaration
+7. Tier 2 verified flag skips re-verification
+8. Tier 3 undeclared, `discover()` returns `{}` → static
+9. Tier 3 undeclared, `discover()` returns non-empty → dynamic
+10. Tier 3 `discover()` raises → dynamic fallback
+11. Tier 3 `discover()` returns `None` → dynamic fallback
+12. Tier 3 `discover_sets()` returns non-empty → dynamic
+13. Tier 3 overrides `fit()` → dynamic
+14. Tier 3 `discover()` returns non-dict type → dynamic fallback
 
 ### detect_schema_change tests (~6)
 
@@ -232,7 +251,7 @@ Using mock transformers with hardcoded `discover()`/`expressions()` returns. No 
 5. Mixed: static + dynamic + schema-changing dynamic → correct layers
 6. Single step → one layer
 7. Empty steps list → `CompilationError`
-8. Layer schemas propagate correctly through boundaries
+8. Layer schemas propagate correctly: Layer 1's input_schema equals last step of Layer 0's step_output_schema
 
 ### build_fit_queries tests (~10)
 
@@ -247,7 +266,7 @@ Using mock transformers with hardcoded `discover()`/`expressions()` returns. No 
 9. Mixed static+dynamic → only dynamic contribute to query
 10. Source as string vs expression both work
 
-### compose_transform tests (~15)
+### compose_transform tests (~16)
 
 1. Single expression step → SELECT with composed expressions
 2. Two expression steps → nested composition
@@ -264,6 +283,19 @@ Using mock transformers with hardcoded `discover()`/`expressions()` returns. No 
 13. `expressions()` returns non-AST → `CompilationError`
 14. Source name appears correctly in FROM clause
 15. Final SELECT aliases match output column names
+16. Unfitted dynamic step → error propagates from expressions() (compiler doesn't catch)
+
+## Source Handling
+
+`plan_fit()` does not carry the source — it only cares about pipeline structure and schema. The `source` parameter is provided to `build_fit_queries()` and `compose_transform()` by pipeline.py:
+- **Layer 0:** source is the original table/file name (from `resolve_input()`)
+- **Layer N>0:** source is the temp view name from the previous layer's materialized output (e.g., `"__layer_0"`)
+
+Pipeline.py manages temp view creation and naming. The compiler just needs a source string to put in the FROM clause.
+
+## Relationship to Transformer._classify()
+
+The existing `Transformer._classify()` method (in transformer.py) is a simple stub that returns `self._classification`. The compiler's `classify_step()` is the **authoritative implementation** — it handles all three tiers, verification, conservative inspection, and caching. Pipeline.py should always use `classify_step()` from compiler.py, never `step._classify()` directly.
 
 ## Design Decisions
 
@@ -280,5 +312,5 @@ Using mock transformers with hardcoded `discover()`/`expressions()` returns. No 
 - No CTE deduplication for shared subexpressions (M5)
 - No FitPlan caching across CV folds (M5)
 - No Tier 3 classification caching (M5)
-- No multi-dialect transpilation (M7) — compiler produces sqlglot ASTs, dialect handling is in pipeline/backend
+- No dialect transpilation — compiler produces dialect-agnostic sqlglot ASTs, transpilation to specific dialects happens in pipeline.py/backend.py (M7 adds multi-dialect)
 - No query execution — that's pipeline.py + backend.py
