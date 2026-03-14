@@ -1,5 +1,6 @@
 """sqlearn — Compile ML preprocessing pipelines to SQL."""
 
+from sqlearn.core.backend import Backend, DuckDBBackend
 from sqlearn.core.errors import (
     ClassificationError,
     CompilationError,
@@ -14,6 +15,7 @@ from sqlearn.core.errors import (
     StaticViolationError,
     UnseenCategoryError,
 )
+from sqlearn.core.io import resolve_input
 from sqlearn.core.schema import (
     ColumnSelector,
     Schema,
@@ -27,9 +29,11 @@ from sqlearn.core.schema import (
 from sqlearn.core.transformer import Transformer
 
 __all__ = [
+    "Backend",
     "ClassificationError",
     "ColumnSelector",
     "CompilationError",
+    "DuckDBBackend",
     "FitError",
     "FrozenError",
     "InvalidStepError",
@@ -47,6 +51,7 @@ __all__ = [
     "dtype",
     "matching",
     "numeric",
+    "resolve_input",
     "temporal",
 ]
 
