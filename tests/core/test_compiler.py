@@ -9,11 +9,12 @@ import sqlglot.expressions as exp
 
 from sqlearn.core.compiler import (
     classify_step,
+    compose_transform,
     detect_schema_change,
     plan_fit,
 )
-from sqlearn.core.errors import ClassificationError, CompilationError
-from sqlearn.core.schema import Schema
+from sqlearn.core.errors import ClassificationError, CompilationError, SchemaError
+from sqlearn.core.schema import Schema, resolve_columns
 from sqlearn.core.transformer import Transformer
 
 # --- Mock transformers for testing ---
@@ -810,3 +811,257 @@ class TestBuildFitQueries:
         assert result.aggregate_query is not None
         sql = result.aggregate_query.sql(dialect="duckdb")
         assert "my_view" in sql
+
+
+# --- Mock transformers for compose_transform tests ---
+
+
+class _QueryStep(Transformer):
+    """Transformer that uses query() instead of expressions()."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+    def query(self, input_query: exp.Expression) -> exp.Expression:
+        """Wrap input in a SELECT with window function."""
+        return exp.select(
+            "*",
+            exp.Window(
+                this=exp.Avg(this=exp.Column(this="price")),
+                partition_by=[exp.Column(this="city")],
+            ).as_("price_avg"),
+        ).from_(input_query.subquery("__sub"))
+
+    def output_schema(self, schema: Schema) -> Schema:
+        """Add price_avg column if not already present."""
+        if "price_avg" in schema.columns:
+            return schema
+        return schema.add({"price_avg": "DOUBLE"})
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Not used — query() takes precedence."""
+        return {c: exprs[c] for c in columns}
+
+
+_QueryStep.__module__ = "sqlearn.features.fake"
+
+
+class _CollisionStep(Transformer):
+    """Transformer that adds __collision__ column — two of these cause SchemaError."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Return same columns plus __collision__."""
+        result = {c: exprs[c] for c in columns}
+        result["__collision__"] = exp.Literal.number(1)
+        return result
+
+    def output_schema(self, schema: Schema) -> Schema:
+        """Add collision column if not already present."""
+        if "__collision__" in schema.columns:
+            return schema
+        return schema.add({"__collision__": "INTEGER"})
+
+
+_CollisionStep.__module__ = "sqlearn.ops.fake"
+
+
+class _NonAstStep(Transformer):
+    """Transformer where expressions() returns a string (invalid)."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+    def expressions(self, columns: list[str], exprs: dict[str, exp.Expression]) -> Any:
+        """Returns strings instead of AST nodes."""
+        return dict.fromkeys(columns, "bad_string")
+
+
+_NonAstStep.__module__ = "sqlearn.ops.fake"
+
+
+def _fit_step(step: Transformer, schema: Schema) -> None:
+    """Helper: minimally fit a step so compose_transform works."""
+    col_spec = step._resolve_columns_spec()  # pyright: ignore[reportPrivateUsage]
+    if col_spec is None:
+        columns = list(schema.columns.keys())
+    else:
+        columns = resolve_columns(schema, col_spec)
+    step.columns_ = columns
+    step.input_schema_ = schema
+    step.output_schema_ = step.output_schema(schema)
+    step._fitted = True  # pyright: ignore[reportPrivateUsage]
+    step.params_ = {}
+    step.sets_ = {}
+
+
+class TestComposeTransform:
+    """Test compose_transform expression composition."""
+
+    def test_single_expression_step(self, schema: Schema) -> None:
+        """Single expression step → SELECT with composed expressions."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        assert "FROM" in sql
+        assert "data" in sql
+
+    def test_two_steps_nested(self, schema: Schema) -> None:
+        """Two expression steps → nested composition."""
+        s1 = _BuiltinStatic()
+        s2 = _BuiltinStatic()
+        _fit_step(s1, schema)
+        _fit_step(s2, schema)
+        result = compose_transform([s1, s2], "data")
+        sql = result.sql(dialect="duckdb")
+        assert "FROM" in sql
+        # Both steps multiply by 2, so expect nested multiplication in output
+        assert sql.count("*") >= 2 or "2" in sql
+
+    def test_query_step_cte(self, schema: Schema) -> None:
+        """query() step → CTE promotion."""
+        step = _QueryStep()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        # CTE should be present
+        assert result.find(exp.With) is not None or "__cte_" in sql
+
+    def test_expression_query_expression(self, schema: Schema) -> None:
+        """Expression → query → expression → CTE in middle."""
+        s1 = _BuiltinStatic()
+        s2 = _QueryStep()
+        s3 = _BuiltinStatic()
+        output_schema = schema.add({"price_avg": "DOUBLE"})
+        _fit_step(s1, schema)
+        _fit_step(s2, schema)
+        _fit_step(s3, output_schema)
+        result = compose_transform([s1, s2, s3], "data")
+        sql = result.sql(dialect="duckdb")
+        assert isinstance(result, exp.Select)
+        # CTE should be present from the query() step
+        assert result.find(exp.With) is not None or "__cte_" in sql
+
+    def test_multiple_query_steps(self, schema: Schema) -> None:
+        """Multiple query() steps → chained CTEs."""
+        s1 = _QueryStep()
+        s2 = _QueryStep()
+        output_schema = schema.add({"price_avg": "DOUBLE"})
+        _fit_step(s1, schema)
+        _fit_step(s2, output_schema)
+        result = compose_transform([s1, s2], "data")
+        sql = result.sql(dialect="duckdb")
+        assert isinstance(result, exp.Select)
+        # Should have 2 CTEs
+        assert sql.count("__cte_") >= 2
+
+    def test_passthrough(self, schema: Schema) -> None:
+        """Unmodified columns pass through in output."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        assert "price" in sql
+
+    def test_empty_pipeline_raises(self) -> None:
+        """Empty pipeline → CompilationError."""
+        with pytest.raises(CompilationError):
+            compose_transform([], "data")
+
+    def test_all_static_no_ctes(self, schema: Schema) -> None:
+        """All-static pipeline → valid SELECT, no CTEs."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        assert "WITH" not in sql
+
+    def test_source_in_from(self, schema: Schema) -> None:
+        """Source name appears in FROM clause."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "my_table")
+        sql = result.sql(dialect="duckdb")
+        assert "my_table" in sql
+
+    def test_aliases_match_output(self, schema: Schema) -> None:
+        """Final SELECT aliases match output column names."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        # Aliases should include original column names
+        assert "price" in sql
+        assert "city" in sql
+
+    def test_schema_changing_step(self, schema: Schema) -> None:
+        """Schema-changing step: new columns appear in output."""
+        step = _SchemaChangingStatic()
+        _fit_step(step, schema)
+        # output_schema adds *_log columns
+        step.output_schema_ = step.output_schema(schema)
+        result = compose_transform([step], "data")
+        sql = result.sql(dialect="duckdb")
+        # New columns from output_schema should appear
+        assert "price_log" in sql or "city_log" in sql
+
+    def test_auto_cte_at_depth(self, schema: Schema) -> None:
+        """Auto CTE when expression depth exceeds threshold."""
+        # Use cte_depth=1 to trigger auto-CTE easily
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        result = compose_transform([step], "data", cte_depth=1)
+        sql = result.sql(dialect="duckdb")
+        # Low threshold should force CTE extraction
+        assert "WITH" in sql or "__cte_" in sql
+
+    def test_depth_tracking(self) -> None:
+        """Depth is measured correctly across nested expressions."""
+        from sqlearn.core.compiler import (  # pyright: ignore[reportPrivateUsage]
+            _expression_depth,
+            _max_depth,
+        )
+
+        # Bare column: depth 1
+        bare = exp.Column(this="price")
+        assert _expression_depth(bare) >= 1
+
+        # Nested: depth increases
+        nested = exp.Mul(this=bare, expression=exp.Literal.number(2))
+        assert _expression_depth(nested) > _expression_depth(bare)
+
+        # _max_depth across dict
+        exprs = {"a": bare, "b": nested}
+        assert _max_depth(exprs) == _expression_depth(nested)
+
+    def test_column_collision_raises(self, schema: Schema) -> None:
+        """Column name collision → SchemaError."""
+        # Two steps that both add "__collision__" — second step triggers collision
+        s1 = _CollisionStep()
+        s2 = _CollisionStep()
+        _fit_step(s1, schema)
+        out_schema = s1.output_schema(schema)
+        _fit_step(s2, out_schema)
+        with pytest.raises(SchemaError, match="__collision__"):
+            compose_transform([s1, s2], "data")
+
+    def test_non_ast_expressions_raises(self, schema: Schema) -> None:
+        """expressions() returns non-AST → CompilationError."""
+        step = _NonAstStep()
+        _fit_step(step, schema)
+        with pytest.raises(CompilationError):
+            compose_transform([step], "data")
+
+    def test_unfitted_step_raises(self, schema: Schema) -> None:
+        """Unfitted step (columns_ is None) → CompilationError."""
+        step = _BuiltinDynamic()
+        # Leave columns_ as None (unfitted) — compose_transform checks this
+        with pytest.raises(CompilationError, match="columns_"):
+            compose_transform([step], "data")

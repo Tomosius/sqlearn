@@ -16,7 +16,7 @@ from typing import Any
 
 import sqlglot.expressions as exp
 
-from sqlearn.core.errors import ClassificationError, CompilationError
+from sqlearn.core.errors import ClassificationError, CompilationError, SchemaError
 from sqlearn.core.schema import Schema, resolve_columns
 from sqlearn.core.transformer import Transformer
 
@@ -719,3 +719,202 @@ def build_fit_queries(
         set_queries=set_queries,
         param_mapping=param_mapping,
     )
+
+
+# ── Phase 3: Transform Composition ──────────────────────────────────
+
+
+_DEFAULT_CTE_DEPTH = 8
+
+
+def _expression_depth(expr: exp.Expression) -> int:
+    """Calculate the nesting depth of an expression.
+
+    Args:
+        expr: sqlglot expression to measure.
+
+    Returns:
+        Maximum nesting depth.
+    """
+    if not isinstance(expr, exp.Expression):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return 0
+    child_depths = (_expression_depth(child) for child in expr.iter_expressions())
+    return max(child_depths, default=0) + 1
+
+
+def _max_depth(exprs: dict[str, exp.Expression]) -> int:
+    """Find maximum depth across all expressions.
+
+    Args:
+        exprs: Column expression dict.
+
+    Returns:
+        Maximum depth found.
+    """
+    if not exprs:
+        return 0
+    return max(_expression_depth(e) for e in exprs.values())
+
+
+def _exprs_to_cte(
+    exprs: dict[str, exp.Expression],
+    source: str | exp.Expression,
+) -> tuple[exp.Expression, dict[str, exp.Expression]]:
+    """Wrap current expressions into a CTE SELECT and reset to bare column refs.
+
+    Args:
+        exprs: Current column expressions.
+        source: Current FROM source.
+
+    Returns:
+        Tuple of (CTE body SELECT expression, new bare exprs referencing CTE).
+    """
+    # Build SELECT for the CTE
+    selects = [v.as_(k) for k, v in exprs.items()]  # pyright: ignore[reportUnknownMemberType]
+    source_expr = exp.to_table(source) if isinstance(source, str) else source  # pyright: ignore[reportUnknownMemberType]
+    cte_query = exp.select(*selects).from_(source_expr)  # pyright: ignore[reportUnknownMemberType]
+
+    # New bare column references against the CTE
+    new_exprs: dict[str, exp.Expression] = {col: exp.Column(this=col) for col in exprs}
+
+    return cte_query, new_exprs
+
+
+def compose_transform(  # noqa: C901, PLR0912, PLR0915
+    steps: list[Transformer],
+    source: str,
+    *,
+    cte_depth: int = _DEFAULT_CTE_DEPTH,
+) -> exp.Select:
+    """Compose fitted transformer steps into a single SELECT.
+
+    Walks through all steps, composing their expressions inline.
+    Steps using query() get promoted to CTEs. Auto-promotes to CTE
+    when expression depth exceeds the threshold.
+
+    Args:
+        steps: Ordered list of fitted transformers.
+        source: Source table/view name.
+        cte_depth: Maximum expression depth before auto-CTE promotion.
+
+    Returns:
+        sqlglot SELECT expression (possibly with CTEs).
+
+    Raises:
+        CompilationError: If steps list is empty, a step is unfitted, or
+            expressions return non-AST values.
+        SchemaError: If column name collision detected between steps.
+    """
+    if not steps:
+        msg = "Cannot compile empty pipeline — no steps provided."
+        raise CompilationError(msg)
+
+    # Check that all steps have been fitted
+    for step in steps:
+        if step.columns_ is None:
+            msg = f"{type(step).__name__} has no columns_ — call fit() first."
+            raise CompilationError(msg)
+
+    # Get initial columns from the first step's input schema
+    first_step = steps[0]
+    if first_step.input_schema_ is not None:
+        initial_cols = list(first_step.input_schema_.columns.keys())
+    else:
+        initial_cols = list(first_step.columns_)  # type: ignore[arg-type]
+
+    exprs: dict[str, exp.Expression] = {col: exp.Column(this=col) for col in initial_cols}
+    current_source: str | exp.Expression = source
+    ctes: list[tuple[str, exp.Expression]] = []
+    cte_counter = 0
+    original_cols = set(initial_cols)
+    # Track which step added each non-original column (for collision detection)
+    added_by: dict[str, int] = {}  # col_name -> step_index
+
+    for step_idx, step in enumerate(steps):
+        # Try query() first — if it returns something, promote to CTE.
+        # Base class query() returns None (does not raise NotImplementedError).
+        selects = [v.as_(k) for k, v in exprs.items()]  # pyright: ignore[reportUnknownMemberType]
+        source_expr: exp.Expression = (
+            exp.to_table(current_source)  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(current_source, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+            else current_source
+        )
+        input_query = exp.select(*selects).from_(source_expr)  # pyright: ignore[reportUnknownMemberType]
+
+        query_result = step.query(input_query)
+
+        if query_result is not None and isinstance(query_result, exp.Expression):  # pyright: ignore[reportUnnecessaryIsInstance]
+            # CTE promotion for query() steps
+            cte_name = f"__cte_{cte_counter}"
+            cte_counter += 1
+            ctes.append((cte_name, query_result))
+            current_source = cte_name
+
+            # Reset expressions to bare column references from output schema
+            if step.output_schema_ is not None:
+                out_cols = list(step.output_schema_.columns.keys())
+            elif step.columns_ is not None:
+                out_cols = list(step.columns_)
+            else:
+                out_cols = list(exprs.keys())
+
+            exprs = {col: exp.Column(this=col) for col in out_cols}
+            continue
+
+        # Check for column name collisions BEFORE merging.
+        # Inspect expressions() output to see what non-original columns
+        # this step produces. If another step already added that column,
+        # it's a collision.
+        if step.columns_ is not None:
+            try:
+                modified = step.expressions(step.columns_, dict(exprs))
+            except (NotImplementedError, Exception):
+                modified = {}
+            if isinstance(modified, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+                new_from_step = set(modified.keys()) - original_cols
+                for col in new_from_step:
+                    if col in added_by and added_by[col] != step_idx:
+                        msg = (
+                            f"Column '{col}' is produced by both step "
+                            f"{added_by[col]} and step {step_idx} "
+                            f"({type(step).__name__}). "
+                            "Use Rename to resolve collisions."
+                        )
+                        raise SchemaError(msg)
+                    added_by[col] = step_idx
+
+        # Expression-level composition via _apply_expressions.
+        exprs = step._apply_expressions(exprs)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+        # Validate output: all values must be sqlglot AST nodes.
+        for col_name, col_expr in exprs.items():
+            if not isinstance(col_expr, exp.Expression):  # pyright: ignore[reportUnnecessaryIsInstance]
+                msg = (
+                    f"{type(step).__name__}.expressions() returned "
+                    f"{type(col_expr).__name__} for column '{col_name}', "
+                    "expected sqlglot Expression."
+                )
+                raise CompilationError(msg)
+
+        # Auto-CTE if depth exceeds threshold
+        if _max_depth(exprs) > cte_depth:
+            cte_name = f"__cte_{cte_counter}"
+            cte_counter += 1
+            cte_query, exprs = _exprs_to_cte(exprs, current_source)
+            ctes.append((cte_name, cte_query))
+            current_source = cte_name
+
+    # Build final SELECT
+    final_selects = [v.as_(k) for k, v in exprs.items()]  # pyright: ignore[reportUnknownMemberType]
+    final_source_expr: exp.Expression = (
+        exp.to_table(current_source)  # pyright: ignore[reportUnknownMemberType]
+        if isinstance(current_source, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+        else current_source
+    )
+    final_query: exp.Select = exp.select(*final_selects).from_(final_source_expr)  # pyright: ignore[reportUnknownMemberType]
+
+    # Attach CTEs using with_() so they are rendered by .sql()
+    for cte_name, cte_query in ctes:
+        final_query = final_query.with_(cte_name, as_=cte_query)  # pyright: ignore[reportUnknownMemberType]
+
+    return final_query
