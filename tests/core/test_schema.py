@@ -9,9 +9,16 @@ from sqlearn.core.schema import (
     CATEGORICAL_TYPES,
     NUMERIC_TYPES,
     TEMPORAL_TYPES,
+    ColumnSelector,
     Schema,
     _classify_type,
     _normalize_type,
+    boolean,
+    categorical,
+    dtype,
+    matching,
+    numeric,
+    temporal,
 )
 
 
@@ -434,3 +441,141 @@ class TestTypeCategorySets:
         """Common temporal types are in TEMPORAL_TYPES."""
         for t in ("DATE", "TIME", "TIMESTAMP"):
             assert t in TEMPORAL_TYPES
+
+
+class TestTypeSelector:
+    """Test TypeSelector via factory functions."""
+
+    def test_numeric_selector(self) -> None:
+        """numeric() selects numeric columns."""
+        s = Schema({"price": "DOUBLE", "city": "VARCHAR", "qty": "INT"})
+        result = numeric().resolve(s)
+        assert result == ["price", "qty"]
+
+    def test_categorical_selector(self) -> None:
+        """categorical() selects categorical columns."""
+        s = Schema({"price": "DOUBLE", "city": "VARCHAR", "name": "TEXT"})
+        result = categorical().resolve(s)
+        assert result == ["city", "name"]
+
+    def test_temporal_selector(self) -> None:
+        """temporal() selects temporal columns."""
+        s = Schema({"ts": "TIMESTAMP", "d": "DATE", "x": "INT"})
+        result = temporal().resolve(s)
+        assert result == ["ts", "d"]
+
+    def test_boolean_selector(self) -> None:
+        """boolean() selects boolean columns."""
+        s = Schema({"active": "BOOLEAN", "x": "INT"})
+        result = boolean().resolve(s)
+        assert result == ["active"]
+
+    def test_no_matches(self) -> None:
+        """Selector returns empty list when no columns match."""
+        s = Schema({"price": "DOUBLE"})
+        assert categorical().resolve(s) == []
+
+    def test_preserves_order(self) -> None:
+        """Selector preserves column insertion order."""
+        s = Schema({"b": "DOUBLE", "a": "INT", "c": "FLOAT"})
+        assert numeric().resolve(s) == ["b", "a", "c"]
+
+    def test_parameterized_types(self) -> None:
+        """Selector handles parameterized types like DECIMAL(18,3)."""
+        s = Schema({"amount": "DECIMAL(18,3)", "name": "VARCHAR"})
+        assert numeric().resolve(s) == ["amount"]
+
+
+class TestPatternSelector:
+    """Test PatternSelector via matching() factory."""
+
+    def test_glob_star(self) -> None:
+        """matching() with * wildcard."""
+        s = Schema({"price_usd": "DOUBLE", "price_eur": "DOUBLE", "city": "VARCHAR"})
+        result = matching("price_*").resolve(s)
+        assert result == ["price_usd", "price_eur"]
+
+    def test_glob_question(self) -> None:
+        """matching() with ? wildcard."""
+        s = Schema({"col1": "INT", "col2": "INT", "col10": "INT"})
+        result = matching("col?").resolve(s)
+        assert result == ["col1", "col2"]
+
+    def test_no_matches(self) -> None:
+        """matching() returns empty list when nothing matches."""
+        s = Schema({"price": "DOUBLE"})
+        assert matching("city_*").resolve(s) == []
+
+    def test_exact_match(self) -> None:
+        """matching() with exact name (no wildcards)."""
+        s = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        assert matching("price").resolve(s) == ["price"]
+
+
+class TestDTypeSelector:
+    """Test DTypeSelector via dtype() factory."""
+
+    def test_exact_type(self) -> None:
+        """dtype() selects columns with matching type."""
+        s = Schema({"a": "DOUBLE", "b": "INT", "c": "DOUBLE"})
+        result = dtype("DOUBLE").resolve(s)
+        assert result == ["a", "c"]
+
+    def test_normalized_matching(self) -> None:
+        """dtype() normalizes both sides for comparison."""
+        s = Schema({"a": "DECIMAL(18,3)", "b": "DECIMAL(10,2)", "c": "INT"})
+        result = dtype("DECIMAL").resolve(s)
+        assert result == ["a", "b"]
+
+    def test_parameterized_selector_normalizes(self) -> None:
+        """dtype('DECIMAL(18,3)') normalizes to DECIMAL, matches all variants."""
+        s = Schema({"a": "DECIMAL(18,3)", "b": "DECIMAL(10,2)"})
+        result = dtype("DECIMAL(18,3)").resolve(s)
+        assert result == ["a", "b"]
+
+    def test_case_insensitive(self) -> None:
+        """dtype() is case-insensitive."""
+        s = Schema({"a": "double"})
+        result = dtype("DOUBLE").resolve(s)
+        assert result == ["a"]
+
+    def test_no_matches(self) -> None:
+        """dtype() returns empty list when nothing matches."""
+        s = Schema({"a": "INT"})
+        assert dtype("VARCHAR").resolve(s) == []
+
+
+class TestSelectorRepr:
+    """Test selector repr for debugging."""
+
+    def test_numeric_repr(self) -> None:
+        """numeric() has readable repr."""
+        assert repr(numeric()) == "numeric()"
+
+    def test_categorical_repr(self) -> None:
+        """categorical() has readable repr."""
+        assert repr(categorical()) == "categorical()"
+
+    def test_matching_repr(self) -> None:
+        """matching() shows the pattern."""
+        assert repr(matching("price_*")) == "matching('price_*')"
+
+    def test_dtype_repr(self) -> None:
+        """dtype() shows the type."""
+        assert repr(dtype("DOUBLE")) == "dtype('DOUBLE')"
+
+
+class TestSelectorIsColumnSelector:
+    """Test that all selectors are ColumnSelector subclasses."""
+
+    def test_type_selector(self) -> None:
+        """TypeSelector is a ColumnSelector."""
+        assert isinstance(numeric(), ColumnSelector)
+
+    def test_pattern_selector(self) -> None:
+        """PatternSelector is a ColumnSelector."""
+        assert isinstance(matching("*"), ColumnSelector)
+
+    def test_dtype_selector(self) -> None:
+        """DTypeSelector is a ColumnSelector."""
+        assert isinstance(dtype("INT"), ColumnSelector)

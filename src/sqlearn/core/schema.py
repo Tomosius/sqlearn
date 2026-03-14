@@ -7,6 +7,7 @@ and resolve_columns() for unified column resolution.
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -295,3 +296,168 @@ class Schema:
         """Show column=type pairs: Schema(price=DOUBLE, city=VARCHAR)."""
         pairs = ", ".join(f"{k}={v}" for k, v in self.columns.items())
         return f"Schema({pairs})"
+
+
+# ---------------------------------------------------------------------------
+# Column selectors
+# ---------------------------------------------------------------------------
+
+
+class ColumnSelector:
+    """Base class for column selection criteria.
+
+    Subclasses implement :meth:`resolve` to produce a list of column names
+    from a :class:`Schema`.
+    """
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Resolve to concrete column names from schema.
+
+        Args:
+            schema: The schema to resolve against.
+
+        Returns:
+            Ordered list of matching column names.
+        """
+        raise NotImplementedError
+
+
+class TypeSelector(ColumnSelector):
+    """Selects columns matching a type category.
+
+    Args:
+        types: Frozenset of SQL type strings to match against.
+        name: Category name for repr (e.g. ``'numeric'``).
+    """
+
+    def __init__(self, types: frozenset[str], name: str) -> None:
+        self._types = types
+        self._name = name
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return columns whose normalized type is in the type set."""
+        return [col for col in schema if _normalize_type(schema[col]) in self._types]
+
+    def __repr__(self) -> str:
+        """Show factory name: numeric()."""
+        return f"{self._name}()"
+
+
+class PatternSelector(ColumnSelector):
+    """Selects columns matching a glob pattern (fnmatch, not regex).
+
+    Regex matching (e.g. ``Drop(pattern="^id_")``) is handled by individual
+    transformers, not by the selector system.
+
+    Args:
+        pattern: Glob pattern string (e.g. ``'price_*'``).
+    """
+
+    def __init__(self, pattern: str) -> None:
+        self._pattern = pattern
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return columns whose names match the glob pattern."""
+        return [col for col in schema if fnmatch.fnmatch(col, self._pattern)]
+
+    def __repr__(self) -> str:
+        """Show factory call: matching('price_*')."""
+        return f"matching({self._pattern!r})"
+
+
+class DTypeSelector(ColumnSelector):
+    """Selects columns matching a SQL type (both sides normalized).
+
+    ``sq.dtype("DECIMAL")`` matches ``DECIMAL``, ``DECIMAL(18,3)``, etc.
+    ``sq.dtype("DECIMAL(18,3)")`` also normalizes to ``DECIMAL``.
+
+    Args:
+        sql_type: SQL type string to match against (normalized before comparison).
+    """
+
+    def __init__(self, sql_type: str) -> None:
+        self._sql_type = _normalize_type(sql_type)
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return columns whose normalized type matches."""
+        return [col for col in schema if _normalize_type(schema[col]) == self._sql_type]
+
+    def __repr__(self) -> str:
+        """Show factory call: dtype('DOUBLE')."""
+        return f"dtype({self._sql_type!r})"
+
+
+# ---------------------------------------------------------------------------
+# Selector factory functions
+# ---------------------------------------------------------------------------
+
+
+def numeric() -> TypeSelector:
+    """Select all numeric columns.
+
+    Returns:
+        A selector that resolves to columns with numeric SQL types
+        (INTEGER, DOUBLE, FLOAT, DECIMAL, etc.).
+    """
+    return TypeSelector(NUMERIC_TYPES, "numeric")
+
+
+def categorical() -> TypeSelector:
+    """Select all categorical columns.
+
+    Returns:
+        A selector that resolves to columns with categorical SQL types
+        (VARCHAR, TEXT, STRING, etc.).
+    """
+    return TypeSelector(CATEGORICAL_TYPES, "categorical")
+
+
+def temporal() -> TypeSelector:
+    """Select all temporal columns.
+
+    Returns:
+        A selector that resolves to columns with temporal SQL types
+        (DATE, TIME, TIMESTAMP, etc.).
+    """
+    return TypeSelector(TEMPORAL_TYPES, "temporal")
+
+
+def boolean() -> TypeSelector:
+    """Select all boolean columns.
+
+    Returns:
+        A selector that resolves to columns with boolean SQL types
+        (BOOLEAN, BOOL, LOGICAL).
+    """
+    return TypeSelector(BOOLEAN_TYPES, "boolean")
+
+
+def matching(pattern: str) -> PatternSelector:
+    """Select columns matching a glob pattern.
+
+    Uses :func:`fnmatch.fnmatch` for matching. Supports ``*``, ``?``,
+    ``[seq]``, and ``[!seq]`` wildcards.
+
+    Args:
+        pattern: Glob pattern string (e.g. ``'price_*'``).
+
+    Returns:
+        A selector that resolves to columns whose names match the pattern.
+    """
+    return PatternSelector(pattern)
+
+
+def dtype(sql_type: str) -> DTypeSelector:
+    """Select columns matching a specific SQL type.
+
+    Both the selector type and column types are normalized before comparison
+    (parameters stripped, uppercased). So ``dtype("DECIMAL")`` matches
+    ``DECIMAL(18,3)``.
+
+    Args:
+        sql_type: SQL type string to match.
+
+    Returns:
+        A selector that resolves to columns with matching normalized type.
+    """
+    return DTypeSelector(sql_type)
