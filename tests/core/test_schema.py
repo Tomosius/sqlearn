@@ -18,6 +18,7 @@ from sqlearn.core.schema import (
     dtype,
     matching,
     numeric,
+    resolve_columns,
     temporal,
 )
 
@@ -579,3 +580,81 @@ class TestSelectorIsColumnSelector:
     def test_dtype_selector(self) -> None:
         """DTypeSelector is a ColumnSelector."""
         assert isinstance(dtype("INT"), ColumnSelector)
+
+
+class TestResolveColumns:
+    """Test resolve_columns() unified resolution."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Mixed-type schema for testing."""
+        return Schema(
+            {
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+                "created": "TIMESTAMP",
+                "active": "BOOLEAN",
+            }
+        )
+
+    # --- String literals ---
+
+    def test_numeric_string(self, schema: Schema) -> None:
+        """'numeric' string resolves to numeric columns."""
+        assert resolve_columns(schema, "numeric") == ["price", "qty"]
+
+    def test_categorical_string(self, schema: Schema) -> None:
+        """'categorical' string resolves to categorical columns."""
+        assert resolve_columns(schema, "categorical") == ["city"]
+
+    def test_temporal_string(self, schema: Schema) -> None:
+        """'temporal' string resolves to temporal columns."""
+        assert resolve_columns(schema, "temporal") == ["created"]
+
+    def test_boolean_string(self, schema: Schema) -> None:
+        """'boolean' string resolves to boolean columns."""
+        assert resolve_columns(schema, "boolean") == ["active"]
+
+    def test_all_string(self, schema: Schema) -> None:
+        """'all' string resolves to every column."""
+        result = resolve_columns(schema, "all")
+        assert result == ["price", "qty", "city", "created", "active"]
+
+    def test_unknown_string_raises(self, schema: Schema) -> None:
+        """Unknown string literal raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown column specification"):
+            resolve_columns(schema, "unknown")
+
+    # --- Explicit list ---
+
+    def test_explicit_list(self, schema: Schema) -> None:
+        """Explicit column list is validated and returned."""
+        assert resolve_columns(schema, ["price", "city"]) == ["price", "city"]
+
+    def test_explicit_list_missing_raises(self, schema: Schema) -> None:
+        """Explicit list with missing column raises KeyError."""
+        with pytest.raises(KeyError, match="not found"):
+            resolve_columns(schema, ["price", "nonexistent"])
+
+    def test_explicit_empty_list(self, schema: Schema) -> None:
+        """Empty explicit list returns empty list."""
+        assert resolve_columns(schema, []) == []
+
+    # --- ColumnSelector ---
+
+    def test_column_selector(self, schema: Schema) -> None:
+        """ColumnSelector object is resolved."""
+        assert resolve_columns(schema, numeric()) == ["price", "qty"]
+
+    def test_pattern_selector(self) -> None:
+        """PatternSelector works through resolve_columns."""
+        s = Schema({"price_usd": "DOUBLE", "price_eur": "DOUBLE", "city": "VARCHAR"})
+        assert resolve_columns(s, matching("price_*")) == ["price_usd", "price_eur"]
+
+    # --- None ---
+
+    def test_none_raises(self, schema: Schema) -> None:
+        """None raises ValueError."""
+        with pytest.raises(ValueError, match="None"):
+            resolve_columns(schema, None)

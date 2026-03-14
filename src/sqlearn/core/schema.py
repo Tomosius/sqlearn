@@ -461,3 +461,60 @@ def dtype(sql_type: str) -> DTypeSelector:
         A selector that resolves to columns with matching normalized type.
     """
     return DTypeSelector(sql_type)
+
+
+# ---------------------------------------------------------------------------
+# Column resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_columns(
+    schema: Schema,
+    columns: str | list[str] | ColumnSelector | None,
+) -> list[str]:
+    """Resolve column specification to concrete column names.
+
+    Handles all the ways columns can be specified in sqlearn:
+
+    - String literal (``"numeric"``, ``"categorical"``, ``"temporal"``,
+      ``"boolean"``): type-based filtering, used by ``_default_columns``.
+    - ``"all"``: returns every column regardless of type.
+    - ``list[str]``: explicit column names, validated against schema.
+    - :class:`ColumnSelector`: calls ``.resolve(schema)``.
+    - ``None``: raises ValueError. Transformers with ``_default_columns = None``
+      require explicit columns from the user.
+
+    Args:
+        schema: Current table schema.
+        columns: Column specification.
+
+    Returns:
+        Ordered list of column names.
+
+    Raises:
+        ValueError: If columns is None or string is not a recognized category.
+        KeyError: If explicit column names don't exist in schema.
+    """
+    if columns is None:
+        msg = "columns=None requires explicit column specification"
+        raise ValueError(msg)
+
+    if isinstance(columns, ColumnSelector):
+        return columns.resolve(schema)
+
+    if isinstance(columns, list):
+        missing = set(columns) - set(schema.columns)
+        if missing:
+            msg = f"Columns not found in schema: {sorted(missing)}"
+            raise KeyError(msg)
+        return columns
+
+    # String literal
+    if columns == "all":
+        return list(schema)
+
+    if columns in _CATEGORY_MAP:
+        return TypeSelector(_CATEGORY_MAP[columns], columns).resolve(schema)
+
+    msg = f"Unknown column specification: {columns!r}"
+    raise ValueError(msg)
