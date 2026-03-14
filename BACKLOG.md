@@ -26,7 +26,7 @@ These are ready to work on. Ordered by priority.
 ## Planned — Future Milestones
 
 ### Milestone 2 — Core Compiler (v0.1.0)
-- [ ] `schema.py` — Schema dataclass, column type detection
+- [x] `schema.py` — Schema dataclass, column type detection
 - [ ] `transformer.py` — Transformer base class with `_validate_custom()` method
 - [ ] `custom.py` — `sq.custom()` template-based transformer factory
 - [ ] `backend.py` — Backend protocol + DuckDB implementation
