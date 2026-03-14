@@ -1,8 +1,8 @@
 ---
 name: commit
 description: Use when committing changes, creating git commits, or when the user says commit, /commit, or asks to save progress
+disable-model-invocation: false
 user-invocable: true
-allowed-tools: Read, Bash, Grep, Glob
 ---
 
 # Semantic Commit Protocol — sqlearn
@@ -17,6 +17,7 @@ allowed-tools: Read, Bash, Grep, Glob
 3. Scope: domain name (not filename), ≤24 chars, lowercase, or omitted.
 4. Never hallucinate ticket numbers, versions, or benchmarks.
 5. Output raw commit text only — no commentary, no wrappers.
+6. **No Co-Authored-By lines.** Never add co-author trailers.
 
 ## Before Writing the Message
 
@@ -65,6 +66,7 @@ allowed-tools: Read, Bash, Grep, Glob
 | `docs` | Documentation files |
 | `tests` | Test files only |
 | `build` | pyproject.toml, CI, toolchain |
+| `skills` | Agent skills (.claude/skills/) |
 
 **Scope selection:** Use domain of the primary change. Source + matching tests → use source domain. >3 unrelated domains → omit scope.
 
@@ -128,6 +130,7 @@ Recommended split:
 7. Body present if required?
 8. Breaking `!` ↔ `BREAKING CHANGE:` consistent?
 9. No guessed issue numbers?
+10. No Co-Authored-By lines?
 
 ## After Committing
 
