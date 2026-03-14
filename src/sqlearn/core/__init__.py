@@ -1,5 +1,19 @@
 """sqlearn core — Transformer base, Pipeline, Compiler, Backend, Schema."""
 
+from sqlearn.core.errors import (
+    ClassificationError,
+    CompilationError,
+    FitError,
+    FrozenError,
+    InvalidStepError,
+    MissingColumnError,
+    NotFittedError,
+    ProFeatureError,
+    SchemaError,
+    SQLearnError,
+    StaticViolationError,
+    UnseenCategoryError,
+)
 from sqlearn.core.schema import (
     ColumnSelector,
     Schema,
@@ -13,9 +27,21 @@ from sqlearn.core.schema import (
 from sqlearn.core.transformer import Transformer
 
 __all__ = [
+    "ClassificationError",
     "ColumnSelector",
+    "CompilationError",
+    "FitError",
+    "FrozenError",
+    "InvalidStepError",
+    "MissingColumnError",
+    "NotFittedError",
+    "ProFeatureError",
+    "SQLearnError",
     "Schema",
+    "SchemaError",
+    "StaticViolationError",
     "Transformer",
+    "UnseenCategoryError",
     "boolean",
     "categorical",
     "dtype",
