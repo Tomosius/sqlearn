@@ -9,6 +9,8 @@ import threading
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from sqlearn.core.errors import NotFittedError
+
 if TYPE_CHECKING:
     import sqlglot.expressions as exp
 
@@ -267,14 +269,14 @@ class Transformer:
             List of column names from the output schema.
 
         Raises:
-            ValueError: If transformer is not fitted.
+            NotFittedError: If transformer is not fitted.
         """
         if not self._fitted:
             msg = f"{type(self).__name__} is not fitted"
-            raise ValueError(msg)
+            raise NotFittedError(msg)
         if self.output_schema_ is None:
             msg = "output_schema_ is not set"
-            raise ValueError(msg)
+            raise NotFittedError(msg)
         return list(self.output_schema_.columns.keys())
 
     # --- sklearn introspection ---
@@ -424,11 +426,11 @@ class Transformer:
             Expression dict after applying this transformer.
 
         Raises:
-            RuntimeError: If columns_ is not set (not fitted).
+            NotFittedError: If columns_ is not set (not fitted).
         """
         if self.columns_ is None:
             msg = "columns_ not set — call fit() first"
-            raise RuntimeError(msg)
+            raise NotFittedError(msg)
 
         modified = self.expressions(self.columns_, exprs)
         result = dict(exprs)  # passthrough all input columns

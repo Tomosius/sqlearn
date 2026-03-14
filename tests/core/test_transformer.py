@@ -9,6 +9,7 @@ import threading
 import pytest
 import sqlglot.expressions as exp
 
+from sqlearn.core.errors import NotFittedError
 from sqlearn.core.schema import ColumnSelector, Schema, numeric
 from sqlearn.core.transformer import Transformer
 
@@ -450,7 +451,7 @@ class TestGetFeatureNamesOut:
 
     def test_not_fitted_raises(self) -> None:
         t = _StaticTransformer()
-        with pytest.raises(ValueError, match="not fitted"):
+        with pytest.raises(NotFittedError, match="not fitted"):
             t.get_feature_names_out()
 
     def test_preserves_order(self) -> None:
@@ -637,7 +638,7 @@ class TestApplyExpressions:
 
     def test_not_fitted_raises(self) -> None:
         t = _StaticTransformer()
-        with pytest.raises(RuntimeError, match="columns_"):
+        with pytest.raises(NotFittedError, match="columns_"):
             t._apply_expressions({"price": exp.column("price")})
 
 
