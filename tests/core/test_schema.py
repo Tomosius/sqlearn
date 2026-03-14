@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from sqlearn.core.errors import MissingColumnError, SchemaError
 from sqlearn.core.schema import (
     BOOLEAN_TYPES,
     CATEGORICAL_TYPES,
@@ -122,9 +123,9 @@ class TestSchemaAdd:
         assert "b" in s2
 
     def test_add_duplicate_raises(self) -> None:
-        """add() raises ValueError if column already exists."""
+        """add() raises SchemaError if column already exists."""
         s = Schema({"a": "INT"})
-        with pytest.raises(ValueError, match="already exist"):
+        with pytest.raises(SchemaError, match="already exist"):
             s.add({"a": "DOUBLE"})
 
     def test_add_empty(self) -> None:
@@ -150,9 +151,9 @@ class TestSchemaDrop:
         assert "b" not in s2
 
     def test_drop_missing_raises(self) -> None:
-        """drop() raises KeyError if column doesn't exist."""
+        """drop() raises SchemaError if column doesn't exist."""
         s = Schema({"a": "INT"})
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(SchemaError, match="not found"):
             s.drop(["missing"])
 
     def test_drop_multiple(self) -> None:
@@ -180,9 +181,9 @@ class TestSchemaRename:
         assert "a" not in s2
 
     def test_rename_missing_raises(self) -> None:
-        """rename() raises KeyError if old name doesn't exist."""
+        """rename() raises SchemaError if old name doesn't exist."""
         s = Schema({"a": "INT"})
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(SchemaError, match="not found"):
             s.rename({"missing": "new"})
 
     def test_rename_preserves_order(self) -> None:
@@ -210,9 +211,9 @@ class TestSchemaCast:
         assert s2["b"] == "TEXT"
 
     def test_cast_missing_raises(self) -> None:
-        """cast() raises KeyError if column doesn't exist."""
+        """cast() raises SchemaError if column doesn't exist."""
         s = Schema({"a": "INT"})
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(SchemaError, match="not found"):
             s.cast("missing", "DOUBLE")
 
     def test_cast_single_no_type_raises(self) -> None:
@@ -244,9 +245,9 @@ class TestSchemaSelect:
         assert list(s2) == ["a", "c"]
 
     def test_select_missing_raises(self) -> None:
-        """select() raises KeyError if column doesn't exist."""
+        """select() raises SchemaError if column doesn't exist."""
         s = Schema({"a": "INT"})
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(SchemaError, match="not found"):
             s.select(["missing"])
 
 
@@ -371,9 +372,9 @@ class TestSchemaColumnCategory:
         assert s.column_category("amount") == "numeric"
 
     def test_missing_raises(self) -> None:
-        """Missing column raises KeyError."""
+        """Missing column raises MissingColumnError."""
         s = Schema({"a": "INT"})
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(MissingColumnError, match="not found"):
             s.column_category("missing")
 
 
@@ -633,8 +634,8 @@ class TestResolveColumns:
         assert resolve_columns(schema, ["price", "city"]) == ["price", "city"]
 
     def test_explicit_list_missing_raises(self, schema: Schema) -> None:
-        """Explicit list with missing column raises KeyError."""
-        with pytest.raises(KeyError, match="not found"):
+        """Explicit list with missing column raises SchemaError."""
+        with pytest.raises(SchemaError, match="not found"):
             resolve_columns(schema, ["price", "nonexistent"])
 
     def test_explicit_empty_list(self, schema: Schema) -> None:

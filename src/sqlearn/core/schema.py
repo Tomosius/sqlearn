@@ -11,6 +11,8 @@ import fnmatch
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sqlearn.core.errors import MissingColumnError, SchemaError
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -141,12 +143,12 @@ class Schema:
             New Schema with additional columns appended.
 
         Raises:
-            ValueError: If any column name already exists.
+            SchemaError: If any column name already exists.
         """
         overlap = set(new) & set(self.columns)
         if overlap:
             msg = f"Columns already exist: {sorted(overlap)}"
-            raise ValueError(msg)
+            raise SchemaError(msg)
         return Schema({**self.columns, **new})
 
     def drop(self, cols: list[str]) -> Schema:
@@ -159,12 +161,12 @@ class Schema:
             New Schema without the specified columns.
 
         Raises:
-            KeyError: If any column name doesn't exist.
+            SchemaError: If any column name doesn't exist.
         """
         missing = set(cols) - set(self.columns)
         if missing:
             msg = f"Columns not found: {sorted(missing)}"
-            raise KeyError(msg)
+            raise SchemaError(msg)
         return Schema({k: v for k, v in self.columns.items() if k not in cols})
 
     def rename(self, mapping: dict[str, str]) -> Schema:
@@ -177,12 +179,12 @@ class Schema:
             New Schema with columns renamed, preserving order.
 
         Raises:
-            KeyError: If any old name doesn't exist.
+            SchemaError: If any old name doesn't exist.
         """
         missing = set(mapping) - set(self.columns)
         if missing:
             msg = f"Columns not found: {sorted(missing)}"
-            raise KeyError(msg)
+            raise SchemaError(msg)
         return Schema({mapping.get(k, k): v for k, v in self.columns.items()})
 
     def cast(
@@ -203,7 +205,7 @@ class Schema:
             New Schema with updated types.
 
         Raises:
-            KeyError: If any column name doesn't exist.
+            SchemaError: If any column name doesn't exist.
             TypeError: If single form used without new_type.
         """
         if isinstance(col, dict):
@@ -216,7 +218,7 @@ class Schema:
         missing = set(mapping) - set(self.columns)
         if missing:
             msg = f"Columns not found: {sorted(missing)}"
-            raise KeyError(msg)
+            raise SchemaError(msg)
         return Schema({k: mapping.get(k, v) for k, v in self.columns.items()})
 
     def select(self, cols: list[str]) -> Schema:
@@ -229,12 +231,12 @@ class Schema:
             New Schema with only the specified columns.
 
         Raises:
-            KeyError: If any column name doesn't exist.
+            SchemaError: If any column name doesn't exist.
         """
         missing = set(cols) - set(self.columns)
         if missing:
             msg = f"Columns not found: {sorted(missing)}"
-            raise KeyError(msg)
+            raise SchemaError(msg)
         keep = set(cols)
         return Schema({k: v for k, v in self.columns.items() if k in keep})
 
@@ -251,11 +253,11 @@ class Schema:
             ``'boolean'``, or ``'other'``.
 
         Raises:
-            KeyError: If column doesn't exist.
+            MissingColumnError: If column doesn't exist.
         """
         if col not in self.columns:
             msg = f"Column not found: {col!r}"
-            raise KeyError(msg)
+            raise MissingColumnError(msg, column=col, available=list(self.columns))
         return _classify_type(self.columns[col])
 
     def numeric(self) -> list[str]:
@@ -493,7 +495,7 @@ def resolve_columns(
 
     Raises:
         ValueError: If columns is None or string is not a recognized category.
-        KeyError: If explicit column names don't exist in schema.
+        SchemaError: If explicit column names don't exist in schema.
     """
     if columns is None:
         msg = "columns=None requires explicit column specification"
@@ -506,7 +508,7 @@ def resolve_columns(
         missing = set(columns) - set(schema.columns)
         if missing:
             msg = f"Columns not found in schema: {sorted(missing)}"
-            raise KeyError(msg)
+            raise SchemaError(msg)
         return columns
 
     # String literal
