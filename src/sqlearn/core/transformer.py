@@ -6,6 +6,7 @@ import copy
 import inspect
 import os
 import threading
+import warnings
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -403,3 +404,198 @@ class Transformer:
         state = self.__dict__.copy()
         state["_connection"] = None
         return state
+
+    # --- Expression composition (internal) ---
+
+    def _apply_expressions(
+        self,
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        """Base class wrapper around expressions().
+
+        Called by the compiler, not by users. Handles auto-passthrough
+        of unmodified columns, detects undeclared new columns, and
+        filters output to match output_schema().
+
+        Args:
+            exprs: Current expression dict for all columns.
+
+        Returns:
+            Expression dict after applying this transformer.
+
+        Raises:
+            RuntimeError: If columns_ is not set (not fitted).
+        """
+        if self.columns_ is None:
+            msg = "columns_ not set — call fit() first"
+            raise RuntimeError(msg)
+
+        modified = self.expressions(self.columns_, exprs)
+        result = dict(exprs)  # passthrough all input columns
+        new_cols = set(modified.keys()) - set(exprs.keys())
+        result.update(modified)  # overlay modifications and additions
+
+        # Filter to output schema columns
+        if self.input_schema_ is not None:
+            output_cols = set(self.output_schema(self.input_schema_).columns.keys())
+            undeclared = new_cols - output_cols
+            if undeclared:
+                warnings.warn(
+                    f"{type(self).__name__}.expressions() created columns "
+                    f"{undeclared} but output_schema() doesn't declare them. "
+                    "Override output_schema() to include new columns.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            result = {k: v for k, v in result.items() if k in output_cols}
+
+        return result
+
+    # --- Operators ---
+
+    def __add__(self, other: Transformer) -> Transformer:
+        """Sequential composition: a + b -> Pipeline([a, b]).
+
+        Returns a new Pipeline containing both transformers.
+        Flattens nested Pipeline operands.
+
+        Args:
+            other: Transformer to compose after self.
+
+        Returns:
+            A new Pipeline (once Pipeline is implemented).
+
+        Raises:
+            NotImplementedError: Until Pipeline (issue #7) is implemented.
+        """
+        msg = "Pipeline composition requires sqlearn.core.pipeline (issue #7)"
+        raise NotImplementedError(msg)
+
+    def __iadd__(self, other: Transformer) -> Transformer:
+        """Incremental composition: pipe += step -> NEW Pipeline.
+
+        Non-mutating — follows Python numeric convention.
+        Returns a new Pipeline, does not modify self.
+
+        Args:
+            other: Transformer to append.
+
+        Returns:
+            A new Pipeline (once Pipeline is implemented).
+
+        Raises:
+            NotImplementedError: Until Pipeline (issue #7) is implemented.
+        """
+        return self.__add__(other)
+
+    # --- Stubs (implemented when Pipeline/Compiler/Backend land) ---
+
+    def fit(
+        self,
+        data: Any,
+        y: str | None = None,
+        *,
+        backend: Any = None,
+    ) -> Transformer:
+        """Learn parameters from data.
+
+        Calls discover() and discover_sets() internally. Resolves
+        column specifications against the data schema.
+
+        Args:
+            data: Input data (file path, table name, or DataFrame).
+            y: Target column name, or None.
+            backend: Backend override. Default uses DuckDB.
+
+        Returns:
+            self (for method chaining).
+
+        Raises:
+            NotImplementedError: Until Pipeline (issue #7) is implemented.
+        """
+        raise NotImplementedError
+
+    def transform(
+        self,
+        data: Any,
+        *,
+        out: str = "numpy",
+        backend: Any = None,
+        batch_size: int | None = None,
+        dtype: Any = None,
+        exclude_target: bool = True,
+    ) -> Any:
+        """Apply transformation to data.
+
+        Calls expressions() or query() internally. Compiles to SQL
+        and executes via the backend.
+
+        Args:
+            data: Input data (file path, table name, or DataFrame).
+            out: Output format (``'numpy'``, ``'pandas'``, ``'polars'``,
+                ``'arrow'``).
+            backend: Backend override.
+            batch_size: Process data in batches of this size.
+            dtype: NumPy dtype for output array.
+            exclude_target: Exclude target column(s) from output.
+
+        Returns:
+            TransformResult (numpy-compatible).
+
+        Raises:
+            NotImplementedError: Until Pipeline (issue #7) is implemented.
+        """
+        raise NotImplementedError
+
+    def fit_transform(
+        self,
+        data: Any,
+        y: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Convenience: fit then transform.
+
+        Args:
+            data: Input data.
+            y: Target column name.
+            **kwargs: Passed to transform().
+
+        Returns:
+            TransformResult (numpy-compatible).
+
+        Raises:
+            NotImplementedError: Until Pipeline (issue #7) is implemented.
+        """
+        raise NotImplementedError
+
+    def to_sql(
+        self,
+        *,
+        dialect: str = "duckdb",
+        table: str = "__input__",
+    ) -> str:
+        """Compile to SQL string without executing.
+
+        Args:
+            dialect: SQL dialect for output (``'duckdb'``, ``'postgres'``,
+                ``'snowflake'``, etc.).
+            table: Input table name placeholder.
+
+        Returns:
+            SQL query string.
+
+        Raises:
+            NotImplementedError: Until Compiler (issue #6) is implemented.
+        """
+        raise NotImplementedError
+
+    def freeze(self) -> Any:
+        """Return a FrozenPipeline: immutable, pre-compiled, deployment-ready.
+
+        Returns:
+            FrozenPipeline instance.
+
+        Raises:
+            NotImplementedError: Until FrozenPipeline (Milestone 7).
+        """
+        raise NotImplementedError

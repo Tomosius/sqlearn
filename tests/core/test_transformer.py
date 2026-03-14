@@ -237,6 +237,53 @@ class _AutoDetectDynamicSets(Transformer):
 
 
 # ---------------------------------------------------------------------------
+# Task 6 helpers — _apply_expressions tests
+# ---------------------------------------------------------------------------
+
+
+class _AddColumnTransformer(Transformer):
+    """Transformer that adds a new column (for _apply_expressions tests)."""
+
+    _default_columns = "numeric"
+    _classification = "static"
+
+    def expressions(
+        self,
+        columns: list[str],
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        result: dict[str, exp.Expression] = {}
+        for col in columns:
+            result[col] = exprs[col]
+            result[f"{col}_doubled"] = exp.Mul(
+                this=exprs[col],
+                expression=exp.Literal.number(2),
+            )
+        return result
+
+    def output_schema(self, schema: Schema) -> Schema:
+        """Declare added columns in output."""
+        new_cols = {f"{col}_doubled": "DOUBLE" for col in schema.numeric()}
+        return schema.add(new_cols)
+
+
+class _UndeclaredColumnTransformer(Transformer):
+    """Transformer that adds a column without declaring it in output_schema."""
+
+    _default_columns = "numeric"
+    _classification = "static"
+
+    def expressions(
+        self,
+        columns: list[str],
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        return {"secret_col": exp.Literal.number(42)}
+
+    # Does NOT override output_schema — secret_col is undeclared
+
+
+# ---------------------------------------------------------------------------
 # Task 2 tests
 # ---------------------------------------------------------------------------
 
@@ -540,3 +587,121 @@ class TestSerialization:
         t = _DynamicTransformer(scale=3.0)
         t2 = pickle.loads(pickle.dumps(t))  # noqa: S301
         assert type(t2) is _DynamicTransformer
+
+
+class TestApplyExpressions:
+    """Test _apply_expressions() base class wrapper."""
+
+    def test_passthrough_unmodified(self) -> None:
+        t = _StaticTransformer()
+        t._fitted = True
+        t.columns_ = ["price"]
+        t.input_schema_ = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        exprs = {
+            "price": exp.column("price"),
+            "city": exp.column("city"),
+        }
+        result = t._apply_expressions(exprs)
+        assert "price" in result
+        assert "city" in result
+
+    def test_modified_columns_merged(self) -> None:
+        t = _DynamicTransformer()
+        t._fitted = True
+        t.columns_ = ["price"]
+        t.input_schema_ = Schema({"price": "DOUBLE"})
+        exprs = {"price": exp.column("price")}
+        result = t._apply_expressions(exprs)
+        assert "price" in result
+        assert isinstance(result["price"], exp.Sub)
+
+    def test_new_columns_added(self) -> None:
+        t = _AddColumnTransformer()
+        t._fitted = True
+        t.columns_ = ["price"]
+        t.input_schema_ = Schema({"price": "DOUBLE"})
+        exprs = {"price": exp.column("price")}
+        result = t._apply_expressions(exprs)
+        assert "price" in result
+        assert "price_doubled" in result
+
+    def test_output_schema_filters_columns(self) -> None:
+        t = _UndeclaredColumnTransformer()
+        t._fitted = True
+        t.columns_ = ["price"]
+        t.input_schema_ = Schema({"price": "DOUBLE"})
+        exprs = {"price": exp.column("price")}
+        with pytest.warns(UserWarning, match="output_schema"):
+            result = t._apply_expressions(exprs)
+        assert "secret_col" not in result
+
+    def test_not_fitted_raises(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(RuntimeError, match="columns_"):
+            t._apply_expressions({"price": exp.column("price")})
+
+
+class TestOperators:
+    """Test __add__ and __iadd__ pipeline composition."""
+
+    def test_add_raises_not_implemented(self) -> None:
+        a = _StaticTransformer()
+        b = _DynamicTransformer()
+        with pytest.raises(NotImplementedError, match="Pipeline"):
+            _ = a + b
+
+    def test_iadd_raises_not_implemented(self) -> None:
+        a = _StaticTransformer()
+        b = _DynamicTransformer()
+        with pytest.raises(NotImplementedError, match="Pipeline"):
+            a += b
+
+
+class TestStubs:
+    """Test stub methods raise NotImplementedError."""
+
+    def test_fit_stub(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(NotImplementedError):
+            t.fit("data.parquet")
+
+    def test_transform_stub(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(NotImplementedError):
+            t.transform("data.parquet")
+
+    def test_fit_transform_stub(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(NotImplementedError):
+            t.fit_transform("data.parquet")
+
+    def test_to_sql_stub(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(NotImplementedError):
+            t.to_sql()
+
+    def test_freeze_stub(self) -> None:
+        t = _StaticTransformer()
+        with pytest.raises(NotImplementedError):
+            t.freeze()
+
+    def test_fit_signature(self) -> None:
+        import inspect
+
+        sig = inspect.signature(Transformer.fit)
+        params = list(sig.parameters.keys())
+        assert "data" in params
+        assert "y" in params
+        assert "backend" in params
+
+    def test_transform_signature(self) -> None:
+        import inspect
+
+        sig = inspect.signature(Transformer.transform)
+        params = list(sig.parameters.keys())
+        assert "data" in params
+        assert "out" in params
+        assert "backend" in params
+        assert "batch_size" in params
+        assert "dtype" in params
+        assert "exclude_target" in params
