@@ -653,3 +653,160 @@ class TestPlanFit:
         layer1_input_cols = set(plan.layers[1].input_schema.columns.keys())
         assert "price_new" in layer1_input_cols
         assert "city_new" in layer1_input_cols
+
+
+# --- build_fit_queries tests ---
+
+from sqlearn.core.compiler import Layer, build_fit_queries  # noqa: E402
+
+
+class TestBuildFitQueries:
+    """Test build_fit_queries aggregation batching."""
+
+    def _make_layer(self, steps: list[Transformer], schema: Schema) -> Layer:
+        """Helper: create a Layer via plan_fit (single layer)."""
+        plan = plan_fit(steps, schema)
+        return plan.layers[0]
+
+    def _bare_exprs(self, schema: Schema) -> dict[str, exp.Expression]:
+        """Helper: bare column references."""
+        return {c: exp.Column(this=c) for c in schema.columns}
+
+    def test_single_dynamic_step(self, schema: Schema) -> None:
+        """Single dynamic step → one aggregate query."""
+        layer = self._make_layer([_BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+        sql = result.aggregate_query.sql(dialect="duckdb")
+        assert "AVG" in sql
+
+    def test_multiple_dynamic_batched(self, schema: Schema) -> None:
+        """Multiple dynamic steps → batched into one query."""
+        layer = self._make_layer([_BuiltinDynamic(), _BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+        # Both steps contribute to param_mapping — step indices 0 and 1
+        step_indices = {v[0] for v in result.param_mapping.values()}
+        assert len(step_indices) == 2, f"Expected 2 contributing steps, got {step_indices}"
+
+    def test_all_static_layer(self, schema: Schema) -> None:
+        """All static layer → aggregate_query is None."""
+        layer = self._make_layer([_BuiltinStatic(), _BuiltinStatic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is None
+
+    def test_discover_sets_produces_set_queries(self, schema: Schema) -> None:
+        """Step with discover_sets() → set_queries entry."""
+        layer = self._make_layer([_CustomWithSets()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert len(result.set_queries) > 0
+
+    def test_expression_inlining(self, schema: Schema) -> None:
+        """Static before dynamic → static expr composed into aggregation."""
+        # _BuiltinStatic multiplies by 2, _BuiltinDynamic computes AVG
+        # So the aggregation should be AVG(col * 2), not AVG(col)
+        layer = self._make_layer([_BuiltinStatic(), _BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+        sql = result.aggregate_query.sql(dialect="duckdb")
+        assert "AVG" in sql
+        # Verify inlining: the multiplication (from static step) should be
+        # INSIDE the AVG, not a bare column reference
+        assert "* 2" in sql or "2 *" in sql
+
+    def test_multiple_set_queries(self, schema: Schema) -> None:
+        """Multiple steps with discover_sets() → one entry per step."""
+
+        class _SetStep1(Transformer):
+            """First set step."""
+
+            _default_columns = "all"
+            _classification = "dynamic"
+
+            def discover_sets(
+                self, columns: list[str], schema: Schema, y_column: str | None = None
+            ) -> dict[str, exp.Expression]:
+                """Return set query a."""
+                return {"set_a": exp.select("city").from_("data").distinct()}
+
+            def expressions(
+                self, columns: list[str], exprs: dict[str, exp.Expression]
+            ) -> dict[str, exp.Expression]:
+                """Noop."""
+                return {c: exprs[c] for c in columns}
+
+        class _SetStep2(Transformer):
+            """Second set step."""
+
+            _default_columns = "all"
+            _classification = "dynamic"
+
+            def discover_sets(
+                self, columns: list[str], schema: Schema, y_column: str | None = None
+            ) -> dict[str, exp.Expression]:
+                """Return set query b."""
+                return {"set_b": exp.select("price").from_("data").distinct()}
+
+            def expressions(
+                self, columns: list[str], exprs: dict[str, exp.Expression]
+            ) -> dict[str, exp.Expression]:
+                """Noop."""
+                return {c: exprs[c] for c in columns}
+
+        _SetStep1.__module__ = "sqlearn.fake"
+        _SetStep2.__module__ = "sqlearn.fake"
+
+        layer = self._make_layer([_SetStep1(), _SetStep2()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert len(result.set_queries) == 2
+
+    def test_param_mapping(self, schema: Schema) -> None:
+        """param_mapping maps aliases back to step names."""
+        layer = self._make_layer([_BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        # Each entry should be (step_index_str, param_name)
+        for alias, (step_idx, param_name) in result.param_mapping.items():
+            assert isinstance(alias, str)
+            assert isinstance(step_idx, str)
+            assert isinstance(param_name, str)
+
+    def test_empty_discover_skipped(self, schema: Schema) -> None:
+        """Dynamic step with empty discover() → no aggregations from that step."""
+        layer = self._make_layer([_CustomDeclaredDynamicEmpty()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        # declared dynamic but discover returns {} → no aggregate query needed
+        assert result.aggregate_query is None
+
+    def test_mixed_static_dynamic(self, schema: Schema) -> None:
+        """Mixed layer → only dynamic contribute to aggregation."""
+        layer = self._make_layer([_BuiltinStatic(), _BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+
+    def test_source_as_string(self, schema: Schema) -> None:
+        """Source as plain string works."""
+        layer = self._make_layer([_BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+        sql = result.aggregate_query.sql(dialect="duckdb")
+        assert "data" in sql
+
+    def test_source_as_expression(self, schema: Schema) -> None:
+        """Source as sqlglot expression works."""
+        layer = self._make_layer([_BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        source_expr = exp.to_table("my_view")
+        result = build_fit_queries(layer, source_expr, exprs)
+        assert result.aggregate_query is not None
+        sql = result.aggregate_query.sql(dialect="duckdb")
+        assert "my_view" in sql

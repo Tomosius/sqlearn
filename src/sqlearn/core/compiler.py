@@ -12,15 +12,13 @@ Phase 3: compose_transform() — compose expressions into one SELECT
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import sqlglot.expressions as exp
 
 from sqlearn.core.errors import ClassificationError, CompilationError
 from sqlearn.core.schema import Schema, resolve_columns
 from sqlearn.core.transformer import Transformer
-
-if TYPE_CHECKING:
-    import sqlglot.expressions as exp
-
 
 # ── Dataclasses ──────────────────────────────────────────────────────
 
@@ -564,3 +562,160 @@ def plan_fit(
         )
 
     return FitPlan(layers=layers)
+
+
+# ── Phase 2: Fit Query Batching ──────────────────────────────────────
+
+
+def _substitute_columns(
+    expression: exp.Expression,
+    current_exprs: dict[str, exp.Expression],
+) -> exp.Expression:
+    """Replace column references in an expression with current composed expressions.
+
+    When a dynamic step's discover() produces ``AVG(Column('price'))``,
+    and a preceding static step already transformed price to ``price * 2``,
+    this substitutes ``Column('price')`` → ``price * 2`` so the aggregation
+    becomes ``AVG(price * 2)``.
+
+    Args:
+        expression: The aggregation expression to transform.
+        current_exprs: Current column expressions (from static steps).
+
+    Returns:
+        New expression with column references substituted.
+    """
+    expression = expression.copy()
+    for node in expression.walk():
+        if isinstance(node, exp.Column) and not node.table:
+            col_name = node.name
+            if col_name in current_exprs:
+                replacement = current_exprs[col_name].copy()
+                node.replace(replacement)
+    return expression
+
+
+def _collect_aggregations(
+    step_info: StepInfo,
+    step_index: int,
+    running_exprs: dict[str, exp.Expression],
+    aggregate_selects: list[exp.Expression],
+    param_mapping: dict[str, tuple[str, str]],
+) -> None:
+    """Collect scalar aggregations from one dynamic step into shared lists.
+
+    Substitutes current composed expressions into each aggregation expression
+    before appending so that preceding static transforms are inlined.
+
+    Args:
+        step_info: Compiled info for this step.
+        step_index: Position of this step in the layer (for alias naming).
+        running_exprs: Current column expressions (modified in-place by caller).
+        aggregate_selects: Accumulator for aliased aggregate expressions.
+        param_mapping: Accumulator for alias-to-(step, param) mapping.
+    """
+    # Cast to Any: defensive check for user-defined transformers that may
+    # violate type contracts at runtime.
+    try:
+        raw_discover: Any = step_info.step.discover(
+            step_info.columns, step_info.input_schema, None
+        )
+    except Exception:
+        raw_discover = {}
+
+    if not isinstance(raw_discover, dict):
+        return
+    discover_result: dict[str, Any] = raw_discover  # pyright: ignore[reportUnknownVariableType]
+
+    for param_name, agg_expr in discover_result.items():
+        if not isinstance(agg_expr, exp.Expression):
+            continue
+        substituted = _substitute_columns(agg_expr, running_exprs)
+        alias = f"__agg_{step_index}_{param_name}"
+        aggregate_selects.append(substituted.as_(alias))  # pyright: ignore[reportUnknownMemberType]
+        param_mapping[alias] = (str(step_index), param_name)
+
+
+def _collect_set_queries(
+    step_info: StepInfo,
+    step_index: int,
+    set_queries: dict[str, exp.Expression],
+) -> None:
+    """Collect set-valued queries from one dynamic step into a shared dict.
+
+    Args:
+        step_info: Compiled info for this step.
+        step_index: Position of this step in the layer (for key naming).
+        set_queries: Accumulator dict keyed by ``"{step_index}_{set_name}"``.
+    """
+    # Cast to Any: defensive check for user-defined transformers that may
+    # violate type contracts at runtime.
+    try:
+        raw_sets: Any = step_info.step.discover_sets(
+            step_info.columns, step_info.input_schema, None
+        )
+    except Exception:
+        raw_sets = {}
+
+    if not isinstance(raw_sets, dict):
+        return
+    sets_result: dict[str, Any] = raw_sets  # pyright: ignore[reportUnknownVariableType]
+
+    for set_name, set_query in sets_result.items():
+        if isinstance(set_query, exp.Expression):
+            set_queries[f"{step_index}_{set_name}"] = set_query
+
+
+def build_fit_queries(
+    layer: Layer,
+    source: str | exp.Expression,
+    current_exprs: dict[str, exp.Expression],
+) -> FitQueries:
+    """Build minimal SQL queries to fit one layer.
+
+    Batches all scalar aggregations from dynamic steps into one SELECT.
+    Set queries (from discover_sets) are kept separate.
+
+    Static steps' expressions are inlined into dynamic steps' aggregation
+    queries via column substitution.
+
+    Args:
+        layer: The layer to build queries for.
+        source: Source table/view name or expression.
+        current_exprs: Current column expressions (accumulated from
+            prior steps, used for expression inlining).
+
+    Returns:
+        FitQueries with aggregate query, set queries, and param mapping.
+    """
+    aggregate_selects: list[exp.Expression] = []
+    param_mapping: dict[str, tuple[str, str]] = {}
+    set_queries: dict[str, exp.Expression] = {}
+    running_exprs = dict(current_exprs)
+
+    for i, step_info in enumerate(layer.steps):
+        if step_info.classification.kind == "static":
+            # Static step: compose expressions forward for inlining
+            try:
+                modified = step_info.step.expressions(step_info.columns, running_exprs)
+                running_exprs = dict(running_exprs)
+                running_exprs.update(modified)
+            except NotImplementedError:
+                pass
+            continue
+
+        # Dynamic step: collect aggregations and set queries
+        _collect_aggregations(step_info, i, running_exprs, aggregate_selects, param_mapping)
+        _collect_set_queries(step_info, i, set_queries)
+
+    # Build aggregate query
+    aggregate_query: exp.Expression | None = None
+    if aggregate_selects:
+        source_expr = exp.to_table(source) if isinstance(source, str) else source  # pyright: ignore[reportUnknownMemberType]
+        aggregate_query = exp.select(*aggregate_selects).from_(source_expr)  # pyright: ignore[reportUnknownMemberType]
+
+    return FitQueries(
+        aggregate_query=aggregate_query,
+        set_queries=set_queries,
+        param_mapping=param_mapping,
+    )
