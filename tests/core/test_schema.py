@@ -87,3 +87,148 @@ class TestSchemaDunder:
         s1 = Schema({"a": "INT"})
         s2 = Schema({"b": "INT"})
         assert s1 != s2
+
+
+class TestSchemaAdd:
+    """Test Schema.add() method."""
+
+    def test_add_columns(self) -> None:
+        """add() appends new columns."""
+        s = Schema({"a": "INT"})
+        s2 = s.add({"b": "VARCHAR", "c": "DOUBLE"})
+        assert s2.columns == {"a": "INT", "b": "VARCHAR", "c": "DOUBLE"}
+
+    def test_add_returns_new_schema(self) -> None:
+        """add() does not mutate the original."""
+        s = Schema({"a": "INT"})
+        s2 = s.add({"b": "VARCHAR"})
+        assert "b" not in s
+        assert "b" in s2
+
+    def test_add_duplicate_raises(self) -> None:
+        """add() raises ValueError if column already exists."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(ValueError, match="already exist"):
+            s.add({"a": "DOUBLE"})
+
+    def test_add_empty(self) -> None:
+        """add() with empty dict returns equal schema."""
+        s = Schema({"a": "INT"})
+        assert s.add({}) == s
+
+
+class TestSchemaDrop:
+    """Test Schema.drop() method."""
+
+    def test_drop_columns(self) -> None:
+        """drop() removes specified columns."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.drop(["b"])
+        assert s2.columns == {"a": "INT", "c": "DOUBLE"}
+
+    def test_drop_returns_new_schema(self) -> None:
+        """drop() does not mutate the original."""
+        s = Schema({"a": "INT", "b": "VARCHAR"})
+        s2 = s.drop(["b"])
+        assert "b" in s
+        assert "b" not in s2
+
+    def test_drop_missing_raises(self) -> None:
+        """drop() raises KeyError if column doesn't exist."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(KeyError, match="not found"):
+            s.drop(["missing"])
+
+    def test_drop_multiple(self) -> None:
+        """drop() can remove multiple columns at once."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.drop(["a", "c"])
+        assert s2.columns == {"b": "VARCHAR"}
+
+
+class TestSchemaRename:
+    """Test Schema.rename() method."""
+
+    def test_rename_column(self) -> None:
+        """rename() changes column names preserving order."""
+        s = Schema({"old": "INT", "keep": "VARCHAR"})
+        s2 = s.rename({"old": "new"})
+        assert list(s2) == ["new", "keep"]
+        assert s2["new"] == "INT"
+
+    def test_rename_returns_new_schema(self) -> None:
+        """rename() does not mutate the original."""
+        s = Schema({"a": "INT"})
+        s2 = s.rename({"a": "b"})
+        assert "a" in s
+        assert "a" not in s2
+
+    def test_rename_missing_raises(self) -> None:
+        """rename() raises KeyError if old name doesn't exist."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(KeyError, match="not found"):
+            s.rename({"missing": "new"})
+
+    def test_rename_preserves_order(self) -> None:
+        """rename() preserves column position."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.rename({"b": "bb"})
+        assert list(s2) == ["a", "bb", "c"]
+
+
+class TestSchemaCast:
+    """Test Schema.cast() method."""
+
+    def test_cast_single(self) -> None:
+        """cast() changes one column's type."""
+        s = Schema({"a": "INT", "b": "VARCHAR"})
+        s2 = s.cast("a", "DOUBLE")
+        assert s2["a"] == "DOUBLE"
+        assert s2["b"] == "VARCHAR"
+
+    def test_cast_batch(self) -> None:
+        """cast() with dict changes multiple types."""
+        s = Schema({"a": "INT", "b": "VARCHAR"})
+        s2 = s.cast({"a": "DOUBLE", "b": "TEXT"})
+        assert s2["a"] == "DOUBLE"
+        assert s2["b"] == "TEXT"
+
+    def test_cast_missing_raises(self) -> None:
+        """cast() raises KeyError if column doesn't exist."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(KeyError, match="not found"):
+            s.cast("missing", "DOUBLE")
+
+    def test_cast_single_no_type_raises(self) -> None:
+        """cast() with string col but no new_type raises TypeError."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(TypeError, match="new_type is required"):
+            s.cast("a")  # type: ignore[call-overload]
+
+    def test_cast_preserves_order(self) -> None:
+        """cast() preserves column position."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.cast("b", "TEXT")
+        assert list(s2) == ["a", "b", "c"]
+
+
+class TestSchemaSelect:
+    """Test Schema.select() method."""
+
+    def test_select_columns(self) -> None:
+        """select() keeps only specified columns."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.select(["a", "c"])
+        assert s2.columns == {"a": "INT", "c": "DOUBLE"}
+
+    def test_select_preserves_original_order(self) -> None:
+        """select() preserves original column order, not argument order."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        s2 = s.select(["c", "a"])
+        assert list(s2) == ["a", "c"]
+
+    def test_select_missing_raises(self) -> None:
+        """select() raises KeyError if column doesn't exist."""
+        s = Schema({"a": "INT"})
+        with pytest.raises(KeyError, match="not found"):
+            s.select(["missing"])
