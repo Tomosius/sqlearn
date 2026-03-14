@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import pickle
+import threading
+
 import pytest
 import sqlglot.expressions as exp
 
@@ -407,3 +411,132 @@ class TestGetFeatureNamesOut:
         t._fitted = True
         t.output_schema_ = Schema({"b": "INT", "a": "VARCHAR", "c": "DOUBLE"})
         assert t.get_feature_names_out() == ["b", "a", "c"]
+
+
+class TestCheckThread:
+    """Test _check_thread() thread/process safety guard."""
+
+    def test_first_call_sets_owner(self) -> None:
+        t = _StaticTransformer()
+        t._check_thread()
+        assert t._owner_thread == threading.current_thread().ident
+        assert t._owner_pid == os.getpid()
+
+    def test_same_thread_ok(self) -> None:
+        t = _StaticTransformer()
+        t._check_thread()
+        t._check_thread()  # should not raise
+
+    def test_different_thread_raises(self) -> None:
+        t = _StaticTransformer()
+        t._check_thread()  # set owner to main thread
+
+        error: BaseException | None = None
+
+        def call_from_thread() -> None:
+            nonlocal error
+            try:
+                t._check_thread()
+            except RuntimeError as e:
+                error = e
+
+        thread = threading.Thread(target=call_from_thread)
+        thread.start()
+        thread.join()
+        assert error is not None
+        assert "thread" in str(error).lower()
+        assert "clone" in str(error).lower()
+
+    def test_different_pid_raises(self) -> None:
+        t = _StaticTransformer()
+        t._check_thread()
+        t._owner_pid = -1  # simulate different process
+        with pytest.raises(RuntimeError, match="process"):
+            t._check_thread()
+
+
+class TestClone:
+    """Test clone() creates independent thread-safe copy."""
+
+    def test_clone_unfitted(self) -> None:
+        t = _DynamicTransformer(scale=2.0, columns=["price"])
+        c = t.clone()
+        assert c.get_params() == t.get_params()
+        assert c is not t
+
+    def test_clone_fitted_state(self) -> None:
+        t = _DynamicTransformer()
+        t._fitted = True
+        t.params_ = {"price__mean": 42.0}
+        t.columns_ = ["price"]
+        t.input_schema_ = Schema({"price": "DOUBLE"})
+        t.output_schema_ = Schema({"price": "DOUBLE"})
+        c = t.clone()
+        assert c._fitted is True
+        assert c.params_ == {"price__mean": 42.0}
+        assert c.columns_ == ["price"]
+
+    def test_clone_deep_copies_params(self) -> None:
+        t = _DynamicTransformer()
+        t._fitted = True
+        t.params_ = {"price__mean": 42.0}
+        c = t.clone()
+        c.params_["price__mean"] = 99.0
+        assert t.params_["price__mean"] == 42.0  # original unchanged
+
+    def test_clone_resets_thread_owner(self) -> None:
+        t = _StaticTransformer()
+        t._check_thread()
+        c = t.clone()
+        assert c._owner_thread is None
+        assert c._owner_pid is None
+
+    def test_clone_type_preserved(self) -> None:
+        t = _DynamicTransformer(scale=3.0)
+        c = t.clone()
+        assert type(c) is _DynamicTransformer
+        assert c.scale == 3.0
+
+
+class TestCopy:
+    """Test copy() deep copy."""
+
+    def test_copy_creates_independent_instance(self) -> None:
+        t = _DynamicTransformer(scale=2.0)
+        c = t.copy()
+        assert c is not t
+        assert c.scale == 2.0
+
+    def test_copy_deep_copies_params(self) -> None:
+        t = _DynamicTransformer()
+        t._fitted = True
+        t.params_ = {"x": 1.0}
+        c = t.copy()
+        c.params_["x"] = 99.0
+        assert t.params_["x"] == 1.0
+
+
+class TestSerialization:
+    """Test __getstate__ / __setstate__ for pickle."""
+
+    def test_pickle_roundtrip(self) -> None:
+        t = _DynamicTransformer(scale=2.0)
+        t._fitted = True
+        t.params_ = {"price__mean": 42.0}
+        data = pickle.dumps(t)
+        t2 = pickle.loads(data)  # noqa: S301
+        assert t2.scale == 2.0
+        assert t2.params_ == {"price__mean": 42.0}
+        assert t2._fitted is True
+
+    def test_pickle_nulls_connection(self) -> None:
+        t = _StaticTransformer()
+        t._connection = "fake_connection"
+        data = pickle.dumps(t)
+        t2 = pickle.loads(data)  # noqa: S301
+        assert t2._connection is None
+
+    def test_pickle_preserves_type(self) -> None:
+        t = _DynamicTransformer(scale=3.0)
+        t2 = pickle.loads(pickle.dumps(t))  # noqa: S301
+        assert type(t2) is _DynamicTransformer

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
+import os
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -320,3 +323,83 @@ class Transformer:
                 raise ValueError(msg)
             setattr(self, key, value)
         return self
+
+    # --- Thread safety ---
+
+    def _check_thread(self) -> None:
+        """Guard against cross-thread/cross-process access.
+
+        Stores _owner_thread and _owner_pid on first call. Raises
+        RuntimeError on subsequent calls from different thread/process.
+
+        Raises:
+            RuntimeError: If accessed from different thread or process.
+        """
+        current_thread = threading.current_thread().ident
+        current_pid = os.getpid()
+
+        if self._owner_pid is None:
+            self._owner_pid = current_pid
+            self._owner_thread = current_thread
+        elif self._owner_pid != current_pid:
+            msg = (
+                f"{type(self).__name__} accessed from a different process "
+                f"(original pid={self._owner_pid}, current pid={current_pid}). "
+                "DuckDB connections cannot be shared across processes."
+            )
+            raise RuntimeError(msg)
+        elif self._owner_thread != current_thread:
+            msg = (
+                f"{type(self).__name__} accessed from a different thread. "
+                "Pipelines are not thread-safe. Use .clone() to create "
+                "a thread-safe copy with the same fitted parameters."
+            )
+            raise RuntimeError(msg)
+
+    # --- Copying ---
+
+    def clone(self) -> Transformer:
+        """Create independent copy. Thread-safe (new connection).
+
+        Deep copies params_, sets_, columns_. Resets thread ownership.
+        Used by sq.Search for parallel training.
+
+        Returns:
+            New Transformer of the same type with same params and
+            fitted state, but independent thread ownership.
+        """
+        params = self.get_params()
+        new = type(self)(**params)
+        new._fitted = self._fitted
+        new.params_ = copy.deepcopy(self.params_)
+        new.sets_ = copy.deepcopy(self.sets_)
+        new.columns_ = copy.deepcopy(self.columns_)
+        new.input_schema_ = self.input_schema_
+        new.output_schema_ = self.output_schema_
+        new._y_column = self._y_column
+        new._owner_thread = None
+        new._owner_pid = None
+        new._connection = None
+        return new
+
+    def copy(self) -> Transformer:
+        """Deep copy via copy.deepcopy().
+
+        NOT thread-safe. Use clone() for cross-thread independence.
+
+        Returns:
+            Deep copy of this transformer.
+        """
+        return copy.deepcopy(self)
+
+    # --- Serialization ---
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Null out DuckDB connection before pickling.
+
+        Returns:
+            Instance state dict with _connection set to None.
+        """
+        state = self.__dict__.copy()
+        state["_connection"] = None
+        return state

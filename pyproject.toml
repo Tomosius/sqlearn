@@ -117,6 +117,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "src/sqlearn/core/transformer.py" = [
     "ARG002",  # base class interface methods have unused params by design
+    "SLF001",  # clone() accesses private attrs on new instance of same type
 ]
 "tests/**/*.py" = [
     "S101",    # assert is fine in tests
