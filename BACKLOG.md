@@ -42,6 +42,8 @@ These are ready to work on. Ordered by priority.
 - [ ] Custom transformer validation tests (type checking, schema, params)
 - [ ] Integration tests: pipeline output matches sklearn (`np.allclose`)
 - [ ] SQL snapshot tests
+- [ ] Documentation site infrastructure (mkdocs + mkdocstrings)
+- [ ] API reference auto-generated from docstrings (all shipped M2 modules)
 
 ### Milestone 3 — Composition + Breadth (v0.2.0)
 - [ ] `Columns` (replaces ColumnTransformer)
@@ -52,6 +54,9 @@ These are ready to work on. Ordered by priority.
 - [ ] More encoders: Ordinal, Hash, Frequency
 - [ ] Data operations: Rename, Cast, Filter, Sample, Deduplicate
 - [ ] Data merging: merge(), concat(), Lookup
+- [ ] User guide: conceptual explanations, how the compiler works and why
+- [ ] Tutorials: step-by-step notebooks (basic pipeline, custom transformers, sklearn comparison)
+- [ ] Design decisions guide: why each approach was chosen, trade-offs considered
 
 ### Milestone 4 — Feature Engineering (v0.3.0)
 - [ ] Arithmetic transforms (Log, Sqrt, Power, Clip, etc.)
@@ -61,6 +66,7 @@ These are ready to work on. Ordered by priority.
 - [ ] OutlierHandler, TargetTransform
 - [ ] Feature selection (DropCorrelated, VarianceThreshold, SelectKBest)
 - [ ] AutoFeatures family
+- [ ] Examples gallery: runnable examples with real datasets per transformer category
 
 ### Milestone 5 — Search (v0.4.0)
 - [ ] CV splits (KFold, Stratified, Group, TimeSeries)
@@ -87,7 +93,11 @@ These are ready to work on. Ordered by priority.
 - [ ] `to_config()` / `from_config()` YAML
 - [ ] `save()` / `load()` binary
 - [ ] `pipe.freeze()` → FrozenPipeline
-- [ ] Documentation site
+- [ ] Full documentation site: hosted, searchable, versioned
+- [ ] Complete API reference with examples on every public class/function
+- [ ] Architecture deep-dive: compiler internals, expression composition, CTE promotion
+- [ ] Migration guide: sklearn → sqlearn (side-by-side comparisons)
+- [ ] Performance benchmarks documentation (sqlearn vs sklearn, with methodology)
 - [ ] PyPI release
 
 ### Milestone 8 — Studio Free + Pro Foundation (v1.1.0)
@@ -143,7 +153,7 @@ None yet (pre-implementation).
 Tracked improvements that aren't features or bugs.
 
 - [ ] After v0.1.0: restructure plan docs to reduce duplication (review item #23)
-- [ ] After v0.1.0: documentation tiers for two audiences (review item #13)
+- [x] Documentation plan: phased rollout M2→M7 (replaced review item #13)
 - [ ] Validate expression composition at depth 5+ after Milestone 2 ships (review item #9)
 
 ---
