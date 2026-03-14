@@ -84,7 +84,7 @@ class StepClassification:
     kind: str               # "static" | "dynamic"
     tier: int               # 1, 2, or 3
     reason: str             # human-readable for audit trail
-    warnings: list[str]     # UserWarning messages for ambiguous cases (e.g. "declared dynamic but discover() returned {}")
+    warnings: tuple[str, ...]  # UserWarning messages for ambiguous cases (tuple for frozen immutability)
 
 @dataclass(frozen=True)
 class SchemaChangeResult:
