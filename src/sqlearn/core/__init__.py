@@ -1,6 +1,7 @@
 """sqlearn core — Transformer base, Pipeline, Compiler, Backend, Schema."""
 
 from sqlearn.core.backend import Backend, DuckDBBackend
+from sqlearn.core.compiler import compose_transform
 from sqlearn.core.errors import (
     ClassificationError,
     CompilationError,
@@ -48,6 +49,7 @@ __all__ = [
     "UnseenCategoryError",
     "boolean",
     "categorical",
+    "compose_transform",
     "dtype",
     "matching",
     "numeric",
