@@ -151,6 +151,7 @@ All design docs are in `docs/`. Read what you need:
 | `docs/13-testing.md` | Test strategy per module, fixtures, CI matrix | Writing tests |
 | `docs/14-decisions.md` | 121 decisions, technical risks, open questions | Understanding why things are the way they are |
 | `docs/15-documentation.md` | Documentation strategy, phased rollout, docstring standards | Documentation work, adding examples |
+| `docs/16-performance.md` | Performance strategy, caching, optimization rollout | Compiler optimizations, CV performance work |
 | `BACKLOG.md` | Feature requests, bugs, improvements, ideas | What to work on next |
 
 ## Coding Conventions

@@ -74,6 +74,10 @@ These are ready to work on. Ordered by priority.
 - [ ] `sq.Search` with pluggable samplers
 - [ ] Multi-fidelity rounds
 - [ ] Preprocessing dedup via AST hashing
+- [ ] FitPlan caching: reuse layer structure + classifications across CV folds
+- [ ] Tier 3 classification cache: `(class_identity, schema_hash)` key avoids re-inspection
+- [ ] Aggregation query dedup: identical discover() expressions across steps → single computation
+- [ ] Fold-aware materialization: share temp views across folds when source data overlaps
 
 ### Milestone 6 — Analysis & Safety (v0.5.0)
 - [ ] `sq.quality()` — data quality score (0-100) with breakdown
