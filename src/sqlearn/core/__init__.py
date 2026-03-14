@@ -10,10 +10,12 @@ from sqlearn.core.schema import (
     numeric,
     temporal,
 )
+from sqlearn.core.transformer import Transformer
 
 __all__ = [
     "ColumnSelector",
     "Schema",
+    "Transformer",
     "boolean",
     "categorical",
     "dtype",

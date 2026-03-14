@@ -705,3 +705,17 @@ class TestStubs:
         assert "batch_size" in params
         assert "dtype" in params
         assert "exclude_target" in params
+
+
+class TestExports:
+    """Test that Transformer is exported correctly."""
+
+    def test_from_core(self) -> None:
+        import sqlearn.core
+
+        assert sqlearn.core.Transformer is Transformer
+
+    def test_from_package(self) -> None:
+        import sqlearn
+
+        assert sqlearn.Transformer is Transformer
