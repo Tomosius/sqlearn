@@ -29,8 +29,8 @@ These are ready to work on. Ordered by priority.
 - [x] `schema.py` — Schema dataclass, column type detection
 - [x] `transformer.py` — Transformer base class with `_validate_custom()` method
 - [ ] `custom.py` — `sq.custom()` template-based transformer factory
-- [ ] `backend.py` — Backend protocol + DuckDB implementation
-- [ ] `io.py` — input resolver (table/file/DataFrame → DuckDB)
+- [x] `backend.py` — Backend protocol + DuckDB implementation
+- [x] `io.py` — input resolver (table/file/DataFrame → DuckDB)
 - [x] `errors.py` — error hierarchy (incl. `ClassificationError`, `ProFeatureError`)
 - [ ] `compiler.py` — expression composition, CTE promotion
 - [ ] `pipeline.py` — Pipeline: fit, transform, fit_transform, to_sql
