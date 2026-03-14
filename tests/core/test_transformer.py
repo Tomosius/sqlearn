@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import sqlglot.expressions as exp
 
-from sqlearn.core.schema import Schema
+from sqlearn.core.schema import ColumnSelector, Schema, numeric
 from sqlearn.core.transformer import Transformer
 
 # ---------------------------------------------------------------------------
@@ -170,3 +170,123 @@ class TestTransformerOverrides:
         t = _StaticTransformer()
         schema = Schema({"price": "DOUBLE"})
         assert t.discover(["price"], schema, y_column="target") == {}
+
+
+# ---------------------------------------------------------------------------
+# Task 2 helpers
+# ---------------------------------------------------------------------------
+
+
+class _AutoDetectDynamic(Transformer):
+    """No _classification — overrides discover(), should auto-detect as dynamic."""
+
+    _default_columns = "all"
+
+    def discover(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, exp.Expression]:
+        return {f"{col}__count": exp.Count(this=exp.column(col)) for col in columns}
+
+    def expressions(
+        self,
+        columns: list[str],
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        return {}
+
+
+class _AutoDetectStatic(Transformer):
+    """No _classification — no discover() override, should auto-detect as static."""
+
+    _default_columns = "all"
+
+    def expressions(
+        self,
+        columns: list[str],
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        return {}
+
+
+class _AutoDetectDynamicSets(Transformer):
+    """No _classification — overrides discover_sets(), should auto-detect as dynamic."""
+
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, exp.Expression]:
+        return {"categories": exp.select(exp.column("col")).from_("t")}
+
+    def expressions(
+        self,
+        columns: list[str],
+        exprs: dict[str, exp.Expression],
+    ) -> dict[str, exp.Expression]:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Task 2 tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveColumnsSpec:
+    """Test _resolve_columns_spec() method."""
+
+    def test_user_override_takes_precedence(self) -> None:
+        t = _StaticTransformer(columns=["price"])
+        assert t._resolve_columns_spec() == ["price"]
+
+    def test_falls_back_to_default(self) -> None:
+        t = _StaticTransformer()
+        assert t._resolve_columns_spec() == "numeric"
+
+    def test_none_when_no_default(self) -> None:
+        t = Transformer()
+        assert t._resolve_columns_spec() is None
+
+    def test_user_string_override(self) -> None:
+        t = _StaticTransformer(columns="all")
+        assert t._resolve_columns_spec() == "all"
+
+    def test_column_selector_override(self) -> None:
+        sel = numeric()
+        t = _StaticTransformer(columns=sel)
+        result = t._resolve_columns_spec()
+        assert isinstance(result, ColumnSelector)
+        assert result is sel
+
+
+class TestClassify:
+    """Test _classify() static/dynamic detection."""
+
+    def test_tier1_static(self) -> None:
+        t = _StaticTransformer()
+        assert t._classify() == "static"
+
+    def test_tier1_dynamic(self) -> None:
+        t = _DynamicTransformer()
+        assert t._classify() == "dynamic"
+
+    def test_tier3_auto_dynamic_discover(self) -> None:
+        t = _AutoDetectDynamic()
+        assert t._classify() == "dynamic"
+
+    def test_tier3_auto_dynamic_discover_sets(self) -> None:
+        t = _AutoDetectDynamicSets()
+        assert t._classify() == "dynamic"
+
+    def test_tier3_auto_static(self) -> None:
+        t = _AutoDetectStatic()
+        assert t._classify() == "static"
+
+    def test_base_transformer_auto_static(self) -> None:
+        t = Transformer()
+        assert t._classify() == "static"

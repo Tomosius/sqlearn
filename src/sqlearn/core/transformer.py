@@ -179,3 +179,44 @@ class Transformer:
             Output schema after this transformation step.
         """
         return schema
+
+    # --- Column resolution ---
+
+    def _resolve_columns_spec(self) -> str | list[str] | ColumnSelector | None:
+        """Return the effective column spec (user override or class default).
+
+        Returns self.columns if user passed columns=, else _default_columns.
+        Actual resolution against schema happens at fit time via
+        resolve_columns().
+
+        Returns:
+            Column specification to resolve, or None.
+        """
+        if self.columns is not None:
+            return self.columns
+        return self._default_columns
+
+    # --- Classification ---
+
+    def _classify(self) -> str:
+        """Classify this transformer as 'static' or 'dynamic'.
+
+        Tier 1: If _classification is set, trust it.
+        Tier 3: Check if discover() or discover_sets() are overridden.
+
+        Safety rule: if in doubt, classify as dynamic.
+
+        Returns:
+            ``'static'`` or ``'dynamic'``.
+        """
+        # Tier 1: explicit declaration
+        if self._classification is not None:
+            return self._classification
+
+        # Tier 3: auto-detect by checking method overrides
+        has_discover = type(self).discover is not Transformer.discover
+        has_discover_sets = type(self).discover_sets is not Transformer.discover_sets
+
+        if has_discover or has_discover_sets:
+            return "dynamic"
+        return "static"
