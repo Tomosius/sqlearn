@@ -134,3 +134,6 @@ nav:
           - MaxAbsScaler: api/maxabs-scaler.md
           - Normalizer: api/normalizer.md
           - OneHotEncoder: api/onehot-encoder.md
+          - OrdinalEncoder: api/ordinal-encoder.md
+          - HashEncoder: api/hash-encoder.md
+          - FrequencyEncoder: api/frequency-encoder.md
