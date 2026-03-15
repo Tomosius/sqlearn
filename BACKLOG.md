@@ -52,7 +52,7 @@ These are ready to work on. Ordered by priority.
 - [ ] `+` operator with flattening
 - [x] More scalers: MinMax, Robust, MaxAbs, Normalizer
 - [x] More encoders: Ordinal, Hash, Frequency
-- [ ] Data operations: Rename, Cast, Filter, Sample, Deduplicate
+- [x] Data operations: Rename, Cast, Filter, Sample, Deduplicate
 - [ ] Data merging: merge(), concat(), Lookup
 - [ ] User guide: conceptual explanations, how the compiler works and why
 - [ ] Tutorials: step-by-step notebooks (basic pipeline, custom transformers, sklearn comparison)
