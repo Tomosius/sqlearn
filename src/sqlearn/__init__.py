@@ -29,6 +29,7 @@ from sqlearn.core.schema import (
     temporal,
 )
 from sqlearn.core.transformer import Transformer
+from sqlearn.custom import Expression, custom
 from sqlearn.encoders.onehot import OneHotEncoder
 from sqlearn.imputers.imputer import Imputer
 from sqlearn.scalers.standard import StandardScaler
@@ -39,6 +40,7 @@ __all__ = [
     "ColumnSelector",
     "CompilationError",
     "DuckDBBackend",
+    "Expression",
     "FitError",
     "FrozenError",
     "Imputer",
@@ -58,6 +60,7 @@ __all__ = [
     "boolean",
     "categorical",
     "compose_transform",
+    "custom",
     "dtype",
     "matching",
     "numeric",

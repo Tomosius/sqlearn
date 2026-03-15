@@ -29,6 +29,7 @@ from sqlearn.core.schema import (
     temporal,
 )
 from sqlearn.core.transformer import Transformer
+from sqlearn.custom import Expression, custom
 
 __all__ = [
     "Backend",
@@ -36,6 +37,7 @@ __all__ = [
     "ColumnSelector",
     "CompilationError",
     "DuckDBBackend",
+    "Expression",
     "FitError",
     "FrozenError",
     "InvalidStepError",
@@ -52,6 +54,7 @@ __all__ = [
     "boolean",
     "categorical",
     "compose_transform",
+    "custom",
     "dtype",
     "matching",
     "numeric",
