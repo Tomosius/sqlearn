@@ -1,6 +1,7 @@
 """sqlearn — Compile ML preprocessing pipelines to SQL."""
 
 from sqlearn.core.backend import Backend, DuckDBBackend
+from sqlearn.core.columns import Columns
 from sqlearn.core.compiler import compose_transform
 from sqlearn.core.errors import (
     ClassificationError,
@@ -21,14 +22,17 @@ from sqlearn.core.pipeline import Pipeline
 from sqlearn.core.schema import (
     ColumnSelector,
     Schema,
+    all_columns,
     boolean,
     categorical,
+    columns,
     dtype,
     matching,
     numeric,
     temporal,
 )
 from sqlearn.core.transformer import Transformer
+from sqlearn.core.union import Union
 from sqlearn.custom import Expression, custom
 from sqlearn.encoders.frequency import FrequencyEncoder
 from sqlearn.encoders.hash import HashEncoder
@@ -51,6 +55,7 @@ __all__ = [
     "Cast",
     "ClassificationError",
     "ColumnSelector",
+    "Columns",
     "CompilationError",
     "Deduplicate",
     "DuckDBBackend",
@@ -80,9 +85,12 @@ __all__ = [
     "StandardScaler",
     "StaticViolationError",
     "Transformer",
+    "Union",
     "UnseenCategoryError",
+    "all_columns",
     "boolean",
     "categorical",
+    "columns",
     "compose_transform",
     "custom",
     "dtype",
