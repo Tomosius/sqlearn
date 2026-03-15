@@ -120,7 +120,11 @@ nav:
       - Core:
           - Pipeline: api/pipeline.md
           - Transformer: api/transformer.md
+          - Columns: api/columns.md
+          - Union: api/union.md
           - Schema: api/schema.md
+          - Selectors: api/selectors.md
+          - Operators: api/operators.md
           - Compiler: api/compiler.md
           - Backend: api/backend.md
           - IO: api/io.md
