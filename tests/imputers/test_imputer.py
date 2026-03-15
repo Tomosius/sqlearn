@@ -743,3 +743,43 @@ class TestComposition:
         result = pipe.fit_transform("t")
         # num (scaled) + cat_a + cat_b = 3 columns
         assert result.shape == (4, 3)
+
+
+class TestExpressionsDefensive:
+    """Defensive code paths in Imputer.expressions()."""
+
+    def test_expressions_without_input_schema(self) -> None:
+        """expressions() with input_schema_ = None uses strategy directly.
+
+        When the Imputer is called without input_schema_ context (e.g.,
+        by the compiler in certain edge cases), it falls back to using
+        self.strategy directly instead of _resolve_strategy(col, schema).
+        This tests the fallback path for string strategy without schema.
+        """
+        imp = Imputer(strategy="mean")
+        imp._fitted = True  # pyright: ignore[reportPrivateUsage]
+        imp.columns_ = ["price"]
+        imp.params_ = {"price__value": 42.0}
+        imp.input_schema_ = None
+        exprs = {"price": exp.Column(this="price")}
+        result = imp.expressions(["price"], exprs)
+        assert "price" in result
+        # Should produce COALESCE(price, 42.0)
+        sql = result["price"].sql(dialect="duckdb")
+        assert "COALESCE" in sql.upper()
+
+    def test_expressions_dict_strategy_without_schema(self) -> None:
+        """expressions() dict strategy with input_schema_ = None uses per-column lookup.
+
+        When strategy is a dict and schema is unavailable, the Imputer
+        looks up the strategy for each column directly from the dict
+        rather than using _resolve_strategy().
+        """
+        imp = Imputer(strategy={"price": "mean", "qty": "zero"})
+        imp._fitted = True  # pyright: ignore[reportPrivateUsage]
+        imp.columns_ = ["price"]
+        imp.params_ = {"price__value": 42.0}
+        imp.input_schema_ = None
+        exprs = {"price": exp.Column(this="price")}
+        result = imp.expressions(["price"], exprs)
+        assert "price" in result

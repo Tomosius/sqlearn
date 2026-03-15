@@ -721,3 +721,35 @@ class TestComposition:
         sql = pipe.to_sql().upper()
         assert "COALESCE" in sql
         assert "CASE" in sql
+
+
+class TestOutputSchemaDefensive:
+    """Defensive code paths in OneHotEncoder.output_schema()."""
+
+    def test_output_schema_no_columns_spec(self) -> None:
+        """output_schema() with _resolve_columns_spec() → None returns schema.
+
+        When both user columns and _default_columns resolve to None, output_schema
+        cannot determine which columns to encode and returns the schema unchanged.
+        This is a defensive fallback for unusual subclass configurations.
+        """
+        encoder = OneHotEncoder()
+        schema = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        # Force _resolve_columns_spec to return None
+        encoder._default_columns = None  # type: ignore[assignment]
+        encoder.columns = None
+        result = encoder.output_schema(schema)
+        assert result is schema
+
+    def test_output_schema_resolve_columns_raises(self) -> None:
+        """output_schema() with invalid column spec returns schema unchanged.
+
+        When resolve_columns() raises because the specified columns don't exist
+        in the schema, output_schema gracefully returns the input schema instead
+        of crashing. This handles cases like pipeline reconfiguration where the
+        schema no longer has the expected columns.
+        """
+        encoder = OneHotEncoder(columns=["nonexistent"])
+        schema = Schema({"price": "DOUBLE"})
+        result = encoder.output_schema(schema)
+        assert result is schema

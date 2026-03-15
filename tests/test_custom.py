@@ -55,32 +55,39 @@ class TestExpressionCreation:
     """Expression() factory validates SQL at creation time."""
 
     def test_valid_expression(self) -> None:
+        """Valid SQL with AS alias creates an _ExpressionTransformer without error."""
         t = Expression("price * quantity AS revenue")
         assert isinstance(t, _ExpressionTransformer)
 
     def test_rejects_missing_alias(self) -> None:
+        """Expression without AS clause raises ValueError."""
         with pytest.raises(ValueError, match="must contain AS"):
             Expression("price * quantity")
 
     def test_rejects_invalid_sql(self) -> None:
+        """Expression with unparseable SQL raises ValueError at creation time."""
         with pytest.raises(ValueError, match="Invalid SQL"):
             Expression("SELECT FROM WHERE AS broken")
 
     def test_repr(self) -> None:
+        """Repr includes the class name for identification in pipeline listings."""
         t = Expression("price * 2 AS double_price")
         assert "Expression" in repr(t) or "_ExpressionTransformer" in repr(t)
 
     def test_classification_is_static(self) -> None:
+        """Expression transformers are always static since they learn no stats."""
         t = Expression("price * 2 AS double_price")
         assert t._classify() == "static"
 
     def test_clone_roundtrip(self) -> None:
+        """Clone produces an independent copy that preserves the SQL template."""
         t = Expression("price * 2 AS double_price")
         cloned = t.clone()
         assert isinstance(cloned, _ExpressionTransformer)
         assert cloned.sql == t.sql
 
     def test_pickle_roundtrip(self) -> None:
+        """Pickle serialize and deserialize preserves SQL template and alias."""
         import pickle
 
         t = Expression("price * 2 AS double_price")
@@ -95,6 +102,7 @@ class TestExpressionInPipeline:
     """Expression works in a Pipeline: adds column, composes with prior steps."""
 
     def test_adds_column(self) -> None:
+        """Expression adds a new derived column while preserving all originals."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline([Expression("price * quantity AS revenue")], backend=backend)
@@ -109,6 +117,7 @@ class TestExpressionInPipeline:
         assert result.shape == (5, 3)
 
     def test_revenue_values(self) -> None:
+        """Derived column computes correct arithmetic values row by row."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline([Expression("price * quantity AS revenue")], backend=backend)
@@ -121,6 +130,7 @@ class TestExpressionInPipeline:
         np.testing.assert_allclose(result[:, rev_idx], expected_revenue)
 
     def test_to_sql_contains_expression(self) -> None:
+        """Generated SQL includes the alias and multiplication operator."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline([Expression("price * quantity AS revenue")], backend=backend)
@@ -150,6 +160,7 @@ class TestExpressionInPipeline:
         assert not np.any(np.isnan(result[:, rev_idx].astype(float)))
 
     def test_case_expression(self) -> None:
+        """CASE WHEN expression produces a named output column."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -174,34 +185,42 @@ class TestCustomCreation:
     """custom() factory validates templates at creation time."""
 
     def test_valid_static_template(self) -> None:
+        """Valid SQL template with {col} placeholder creates a _CustomTransformer."""
         t = custom("LN({col} + 1)", columns="numeric")
         assert isinstance(t, _CustomTransformer)
 
     def test_classification_static_without_learn(self) -> None:
+        """Custom transformer without learn= is classified as static."""
         t = custom("{col} * 2", columns="numeric")
         assert t._classify() == "static"
 
     def test_classification_dynamic_with_learn(self) -> None:
+        """Custom transformer with learn= is classified as dynamic."""
         t = custom("{col} - {mean}", columns="numeric", learn={"mean": "AVG({col})"})
         assert t._classify() == "dynamic"
 
     def test_rejects_invalid_sql(self) -> None:
+        """Unparseable SQL template raises ValueError at creation time."""
         with pytest.raises(ValueError, match="Invalid SQL"):
             custom("SELECT FROM WHERE {col}", columns="numeric")
 
     def test_rejects_invalid_learn_sql(self) -> None:
+        """Unparseable SQL in learn= dict raises ValueError at creation time."""
         with pytest.raises(ValueError, match="Invalid SQL in learn"):
             custom("{col} - {mean}", columns="numeric", learn={"mean": "AVG({col})) EXTRA"})
 
     def test_rejects_combine_with_col_placeholder(self) -> None:
+        """Combine mode with {col} placeholder raises ValueError since combine is cross-column."""
         with pytest.raises(ValueError, match=r"combine.*cannot use.*col"):
             custom("{col} * 2 AS doubled", columns=["a"], mode="combine")
 
     def test_rejects_unknown_mode(self) -> None:
+        """Unrecognized mode string raises ValueError."""
         with pytest.raises(ValueError, match="mode must be"):
             custom("{col} * 2", columns="numeric", mode="invalid")
 
     def test_clone_roundtrip(self) -> None:
+        """Clone produces an independent copy preserving SQL template and mode."""
         t = custom("{col} * 2", columns="numeric")
         cloned = t.clone()
         assert isinstance(cloned, _CustomTransformer)
@@ -249,6 +268,7 @@ class TestCustomStaticPerColumn:
         assert "quantity" in names  # untouched passthrough
 
     def test_to_sql(self) -> None:
+        """Generated SQL includes the column name and arithmetic operator."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -283,6 +303,7 @@ class TestCustomStaticPerColumn:
         assert not np.any(np.isnan(result[:, price_idx].astype(float)))
 
     def test_single_column(self) -> None:
+        """Apply SQRT to a single column and verify correct values."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -303,6 +324,7 @@ class TestCustomCombineMode:
     """custom() combine mode: single expression with multiple columns."""
 
     def test_combine_cross_column(self) -> None:
+        """Combine mode multiplies two columns into a new derived column with correct values."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -324,6 +346,7 @@ class TestCustomCombineMode:
         np.testing.assert_allclose(result[:, rev_idx], [10.0, 40.0, 90.0, 160.0, 250.0])
 
     def test_combine_preserves_originals(self) -> None:
+        """Combine mode adds the derived column while keeping original columns intact."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -456,6 +479,7 @@ class TestCustomDynamic:
         assert not np.any(np.isnan(result[:, price_idx].astype(float)))
 
     def test_to_sql_contains_learned_values(self) -> None:
+        """Generated SQL embeds the learned statistic as a literal value, not an aggregate call."""
         conn = _make_numeric_conn()
         backend = DuckDBBackend(connection=conn)
         pipe = Pipeline(
@@ -558,3 +582,147 @@ class TestEdgeCases:
         assert "constant" in names
         const_idx = names.index("constant")
         np.testing.assert_allclose(result[:, const_idx], [42.0] * 5)
+
+
+class TestCustomDefensiveEdgeCases:
+    """Edge cases for defensive code paths in custom.py."""
+
+    def test_discover_no_learn_returns_empty(self) -> None:
+        """Static custom (no learn=) discover() returns empty dict.
+
+        When learn= is not provided, the custom transformer is static and
+        discover() should return {} immediately since there are no stats to
+        learn from the data.
+        """
+        t = custom("{col} * 2", columns=["price"])
+        schema = __import__("sqlearn.core.schema", fromlist=["Schema"]).Schema({"price": "DOUBLE"})
+        result = t.discover(["price"], schema)
+        assert result == {}
+
+    def test_discover_learn_alias_unwrap(self) -> None:
+        """Learn template with AS alias: discover() unwraps the alias.
+
+        When a learn template like 'AVG({col}) AS avg_val' is parsed, the
+        result is an Alias node. discover() must unwrap it to get the raw
+        aggregate expression (AVG), not the aliased version, so the compiler
+        can batch aggregates correctly.
+        """
+        t = custom(
+            "{col} - {mean}",
+            columns=["price"],
+            learn={"mean": "AVG({col}) AS avg_val"},
+        )
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE"})
+        result = t.discover(["price"], schema)
+        assert "price__mean" in result
+        # Should be Avg, not Alias
+        import sqlglot.expressions as exp
+
+        assert isinstance(result["price__mean"], exp.Avg)
+
+    def test_combine_without_alias_returns_empty(self) -> None:
+        """Combine mode SQL without AS alias → expressions() returns empty dict.
+
+        When the combine mode SQL has no alias (e.g., 'price + quantity' without
+        'AS total'), there's no way to name the output column, so expressions()
+        must return an empty dict (no-op passthrough).
+        """
+        t = custom("price + quantity", columns=["price", "quantity"], mode="combine")
+        import sqlglot.expressions as exp
+
+        exprs = {
+            "price": exp.Column(this="price"),
+            "quantity": exp.Column(this="quantity"),
+        }
+        t.columns_ = ["price", "quantity"]
+        t._fitted = True
+        t.params_ = {}
+        result = t.expressions(["price", "quantity"], exprs)
+        assert result == {}
+
+    def test_combine_output_schema_without_alias(self) -> None:
+        """Combine mode without alias → _has_alias is False, early return.
+
+        When there's no alias, output_schema returns at line 309 since
+        _has_alias is False. The combine-mode branch at 312-317 is not reached.
+        """
+        t = custom("price + quantity", columns=["price", "quantity"], mode="combine")
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE", "quantity": "DOUBLE"})
+        result = t.output_schema(schema)
+        assert result is schema
+
+    def test_combine_output_schema_with_alias(self) -> None:
+        """Combine mode with alias → output_schema adds the aliased column.
+
+        The output schema should include the original columns plus the new
+        column defined by the AS alias in the combine expression.
+        Covers lines 314-316 (combine mode with alias in output_schema).
+        """
+        t = custom("price + quantity AS total", columns=["price", "quantity"], mode="combine")
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE", "quantity": "DOUBLE"})
+        result = t.output_schema(schema)
+        assert "total" in result.columns
+
+    def test_output_schema_no_columns_spec(self) -> None:
+        """Per-column mode with alias but no columns → passthrough.
+
+        _has_alias is True (SQL has AS clause), but _resolve_columns_spec()
+        returns None (no columns and no _default_columns), so output_schema
+        cannot determine target columns and returns schema unchanged.
+        Covers line 322.
+        """
+        t = custom("{col} * 2 AS doubled")
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE"})
+        result = t.output_schema(schema)
+        assert result is schema
+
+    def test_output_schema_resolve_columns_raises(self) -> None:
+        """output_schema with alias but invalid columns → returns unchanged.
+
+        _has_alias is True, but resolve_columns() raises because the column
+        spec references columns that don't exist. output_schema gracefully
+        returns the unchanged schema instead of crashing.
+        Covers lines 325-326.
+        """
+        t = custom("{col} * 2 AS doubled", columns=["nonexistent_col"])
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE"})
+        result = t.output_schema(schema)
+        assert result is schema
+
+    def test_output_schema_per_column_no_alias_in_result(self) -> None:
+        """Per-column template without per-column alias → no new columns added.
+
+        _has_alias is True from validation (because {col} becomes __col__
+        which doesn't affect AS clause), but per-column substitution produces
+        an expression without alias → new_cols is empty → returns schema.
+        Covers branch 335->329.
+        """
+        t = custom("{col} * 2 AS doubled", columns=["price"])
+        from sqlearn.core.schema import Schema
+
+        schema = Schema({"price": "DOUBLE"})
+        result = t.output_schema(schema)
+        # Should add "doubled" column
+        assert "doubled" in result.columns
+
+    def test_parse_select_expr_empty_sql(self) -> None:
+        """_parse_select_expr with empty string → ValueError.
+
+        An empty SQL template produces SELECT FROM __t__ which parses
+        to a Select with no expressions, triggering the validation at
+        lines 45-47.
+        """
+        from sqlearn.custom import _parse_select_expr
+
+        with pytest.raises(ValueError, match="Invalid SQL template"):
+            _parse_select_expr("")

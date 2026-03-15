@@ -574,3 +574,160 @@ class TestPipelineContextManager:
         """__exit__ works even if no backend was created."""
         with Pipeline([_StaticStep()]):
             pass
+
+
+class TestAutoNameWithExistingSteps:
+    """Test _auto_name increments past existing step_NN names."""
+
+    def test_auto_name_after_auto_named(self) -> None:
+        """Adding to a pipeline with auto-named steps increments the counter.
+
+        When existing steps use step_00, step_01, the next auto-name must be
+        step_02, not step_00 again (which would cause a duplicate name error).
+        """
+        pipe = Pipeline([_StaticStep(), _StaticStep()])
+        # pipe.steps are step_00, step_01
+        new = pipe + _DynamicStep()
+        assert new.steps[2][0] == "step_02"
+
+    def test_auto_name_gap_in_numbering(self) -> None:
+        """Auto-name picks max+1 even with gaps in existing numbering.
+
+        If steps are named step_00 and step_05 (gap), the next auto-name
+        should be step_06, not step_01 or step_02.
+        """
+        pipe = Pipeline([("step_00", _StaticStep()), ("step_05", _DynamicStep())])
+        new = pipe + _StaticStep()
+        assert new.steps[2][0] == "step_06"
+
+
+class TestResolveBackendVariants:
+    """Test _resolve_backend with raw DuckDB connections."""
+
+    def test_fit_with_raw_connection(self, tmp_path: Any) -> None:
+        """fit(backend=raw_connection) wraps in DuckDBBackend automatically.
+
+        Users should be able to pass a plain duckdb.DuckDBPyConnection to
+        fit() without manually wrapping it in DuckDBBackend.
+        """
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y")
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("data", backend=conn)
+        assert pipe.is_fitted is True
+        conn.close()
+
+    def test_pipeline_stored_raw_connection(self, tmp_path: Any) -> None:
+        """Pipeline(steps, backend=raw_connection) stores and wraps on first use.
+
+        When a raw connection is passed at construction time, it should be
+        lazily wrapped into a DuckDBBackend on the first fit() call.
+        """
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x")
+
+        pipe = Pipeline([_StaticStep()], backend=conn)
+        pipe.fit("data")
+        assert pipe.is_fitted is True
+        assert pipe._backend_instance is not None
+        conn.close()
+
+
+class TestMultiLayerFit:
+    """Test Pipeline.fit() with schema-changing dynamic steps (multi-layer)."""
+
+    def test_multi_layer_creates_temp_views(self, tmp_path: Any) -> None:
+        """Schema-changing dynamic step triggers multi-layer compilation.
+
+        When a dynamic step changes the schema, the compiler creates a layer
+        boundary. Pipeline.fit() materializes intermediate layers as temp
+        views before fitting subsequent steps. Requires a step AFTER the
+        schema-changing step to actually create 2+ layers.
+        Covers lines 322-338.
+        """
+        import duckdb
+
+        from sqlearn.encoders.onehot import OneHotEncoder
+        from sqlearn.scalers.standard import StandardScaler
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute(
+            "CREATE TABLE data AS SELECT "
+            "1.0 AS price, 'a' AS city UNION ALL SELECT "
+            "2.0, 'b' UNION ALL SELECT "
+            "3.0, 'a'"
+        )
+        conn.close()
+
+        backend = DuckDBBackend(db_path)
+        # OneHotEncoder (dynamic + schema-changing → layer boundary)
+        # → StandardScaler (dynamic → second layer, needs temp view from first)
+        pipe = Pipeline(
+            [OneHotEncoder(columns=["city"]), StandardScaler(columns=["price"])],
+            backend=backend,
+        )
+        pipe.fit("data", backend=backend)
+        result = pipe.transform("data", backend=backend)
+        assert result.shape[0] == 3
+        names = pipe.get_feature_names_out()
+        assert "price" in names
+
+
+class TestTransformEmptyTable:
+    """Test Pipeline.transform() on a table with zero rows."""
+
+    def test_transform_empty_returns_empty_array(self, tmp_path: Any) -> None:
+        """transform() on an empty table returns an empty (0, N) numpy array.
+
+        The pipeline should handle the zero-row case gracefully, returning
+        a float64 array with shape (0, num_columns) instead of crashing.
+        """
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE train AS SELECT 1.0 AS x, 2.0 AS y")
+        conn.execute("CREATE TABLE empty AS SELECT * FROM train WHERE FALSE")
+        conn.close()
+
+        backend = DuckDBBackend(db_path)
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("train", backend=backend)
+        result = pipe.transform("empty", backend=backend)
+        assert result.shape == (0, 2)
+        assert result.dtype == np.float64
+
+
+class TestPipelineRaddDirect:
+    """Test Pipeline.__radd__ called directly (bypasses Transformer.__add__)."""
+
+    def test_radd_with_transformer(self) -> None:
+        """Pipeline.__radd__(Transformer) prepends step.
+
+        When called directly (not through the + operator), __radd__ should
+        create a new Pipeline with the transformer prepended before the
+        existing steps.
+        """
+        pipe = Pipeline([("b", _DynamicStep())])
+        result = pipe.__radd__(_StaticStep())
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 2
+        assert result.steps[1][0] == "b"
+
+    def test_radd_non_transformer_returns_not_implemented(self) -> None:
+        """Pipeline.__radd__(non-Transformer) returns NotImplemented.
+
+        When the left operand is not a Transformer, __radd__ cannot combine
+        them and must return NotImplemented per Python's data model.
+        """
+        pipe = Pipeline([_StaticStep()])
+        result = pipe.__radd__(42)  # type: ignore[arg-type]
+        assert result is NotImplemented
