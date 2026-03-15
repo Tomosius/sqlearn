@@ -129,4 +129,8 @@ nav:
       - Transformers:
           - Imputer: api/imputer.md
           - StandardScaler: api/standard-scaler.md
+          - MinMaxScaler: api/minmax-scaler.md
+          - RobustScaler: api/robust-scaler.md
+          - MaxAbsScaler: api/maxabs-scaler.md
+          - Normalizer: api/normalizer.md
           - OneHotEncoder: api/onehot-encoder.md
