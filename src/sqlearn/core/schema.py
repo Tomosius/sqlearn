@@ -354,6 +354,23 @@ class ColumnSelector:
 
     Subclasses implement :meth:`resolve` to produce a list of column names
     from a :class:`Schema`.
+
+    Selectors support set-like composition operators:
+
+    - ``selector1 | selector2`` — union (columns matching either)
+    - ``selector1 & selector2`` — intersection (columns matching both)
+    - ``~selector`` — negation (columns NOT matching)
+    - ``selector1 - selector2`` — difference (first but not second)
+
+    Examples:
+        Compose selectors for flexible column routing:
+
+        >>> from sqlearn.core.schema import Schema, numeric, boolean, matching
+        >>> schema = Schema({"price": "DOUBLE", "active": "BOOLEAN", "city": "VARCHAR"})
+        >>> (numeric() | boolean()).resolve(schema)
+        ['price', 'active']
+        >>> (~numeric()).resolve(schema)
+        ['active', 'city']
     """
 
     def resolve(self, schema: Schema) -> list[str]:
@@ -366,6 +383,51 @@ class ColumnSelector:
             Ordered list of matching column names.
         """
         raise NotImplementedError
+
+    def __or__(self, other: ColumnSelector) -> _UnionSelector:
+        """Return a selector matching columns in either selector (union).
+
+        Args:
+            other: Another selector to union with.
+
+        Returns:
+            A new selector that resolves to the union of both, preserving
+            order from the left selector first, then unseen from the right.
+        """
+        return _UnionSelector(self, other)
+
+    def __and__(self, other: ColumnSelector) -> _IntersectionSelector:
+        """Return a selector matching columns in both selectors (intersection).
+
+        Args:
+            other: Another selector to intersect with.
+
+        Returns:
+            A new selector that resolves to columns present in both,
+            preserving order from the right selector.
+        """
+        return _IntersectionSelector(self, other)
+
+    def __invert__(self) -> _NegationSelector:
+        """Return a selector matching columns NOT in this selector.
+
+        Returns:
+            A new selector that resolves to all schema columns except
+            those matched by this selector.
+        """
+        return _NegationSelector(self)
+
+    def __sub__(self, other: ColumnSelector) -> _DifferenceSelector:
+        """Return a selector matching columns in this but not the other.
+
+        Args:
+            other: Selector whose matches are excluded.
+
+        Returns:
+            A new selector that resolves to columns in this selector
+            minus those in the other, preserving order.
+        """
+        return _DifferenceSelector(self, other)
 
 
 class TypeSelector(ColumnSelector):
@@ -431,6 +493,143 @@ class DTypeSelector(ColumnSelector):
     def __repr__(self) -> str:
         """Show factory call: dtype('DOUBLE')."""
         return f"dtype({self._sql_type!r})"
+
+
+class _UnionSelector(ColumnSelector):
+    """Selects columns matching either of two selectors (set union).
+
+    Order: columns from left selector first, then unseen from right selector.
+    Duplicates are removed.
+
+    Args:
+        left: First selector.
+        right: Second selector.
+    """
+
+    def __init__(self, left: ColumnSelector, right: ColumnSelector) -> None:
+        self._left = left
+        self._right = right
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return union of both selectors, preserving order without duplicates."""
+        left_cols = self._left.resolve(schema)
+        seen = set(left_cols)
+        return left_cols + [c for c in self._right.resolve(schema) if c not in seen]
+
+    def __repr__(self) -> str:
+        """Show composition: (numeric() | boolean())."""
+        return f"({self._left!r} | {self._right!r})"
+
+
+class _IntersectionSelector(ColumnSelector):
+    """Selects columns matching both selectors (set intersection).
+
+    Order: preserves order from the right selector, filtered by left.
+
+    Args:
+        left: First selector.
+        right: Second selector.
+    """
+
+    def __init__(self, left: ColumnSelector, right: ColumnSelector) -> None:
+        self._left = left
+        self._right = right
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return intersection of both selectors."""
+        left_set = set(self._left.resolve(schema))
+        return [c for c in self._right.resolve(schema) if c in left_set]
+
+    def __repr__(self) -> str:
+        """Show composition: (numeric() & matching('price_*'))."""
+        return f"({self._left!r} & {self._right!r})"
+
+
+class _NegationSelector(ColumnSelector):
+    """Selects all columns NOT matched by the inner selector.
+
+    Order: preserves schema column order.
+
+    Args:
+        inner: Selector whose matches are excluded.
+    """
+
+    def __init__(self, inner: ColumnSelector) -> None:
+        self._inner = inner
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return all schema columns not in the inner selector."""
+        excluded = set(self._inner.resolve(schema))
+        return [c for c in schema if c not in excluded]
+
+    def __repr__(self) -> str:
+        """Show negation: ~numeric()."""
+        return f"~{self._inner!r}"
+
+
+class _DifferenceSelector(ColumnSelector):
+    """Selects columns in the left selector but not the right (set difference).
+
+    Order: preserves order from the left selector.
+
+    Args:
+        left: Selector to keep.
+        right: Selector to exclude.
+    """
+
+    def __init__(self, left: ColumnSelector, right: ColumnSelector) -> None:
+        self._left = left
+        self._right = right
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return columns in left selector minus those in right selector."""
+        excluded = set(self._right.resolve(schema))
+        return [c for c in self._left.resolve(schema) if c not in excluded]
+
+    def __repr__(self) -> str:
+        """Show difference: (numeric() - matching('id_*'))."""
+        return f"({self._left!r} - {self._right!r})"
+
+
+class _AllSelector(ColumnSelector):
+    """Selects all columns in the schema.
+
+    Useful as the starting point for difference or negation expressions:
+    ``all_columns() - categorical()`` selects everything except categoricals.
+    """
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return all column names in schema order."""
+        return list(schema)
+
+    def __repr__(self) -> str:
+        """Show factory call: all_columns()."""
+        return "all_columns()"
+
+
+class _ColumnsSelector(ColumnSelector):
+    """Selects explicitly named columns.
+
+    Only columns that exist in the schema are returned. Non-existent names
+    are silently skipped (use :func:`resolve_columns` with a list for strict
+    validation).
+
+    Args:
+        names: Column names to select.
+    """
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        self._names = names
+
+    def resolve(self, schema: Schema) -> list[str]:
+        """Return the named columns that exist in the schema."""
+        schema_cols = set(schema.columns)
+        return [c for c in self._names if c in schema_cols]
+
+    def __repr__(self) -> str:
+        """Show factory call: columns('price', 'qty')."""
+        args = ", ".join(repr(n) for n in self._names)
+        return f"columns({args})"
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +706,55 @@ def dtype(sql_type: str) -> DTypeSelector:
         A selector that resolves to columns with matching normalized type.
     """
     return DTypeSelector(sql_type)
+
+
+def all_columns() -> _AllSelector:
+    """Select all columns in the schema.
+
+    Useful as the starting point for difference or negation expressions.
+
+    Returns:
+        A selector that resolves to every column in the schema.
+
+    Examples:
+        Select everything except categoricals:
+
+        >>> from sqlearn.core.schema import Schema, all_columns, categorical
+        >>> schema = Schema({"price": "DOUBLE", "city": "VARCHAR", "active": "BOOLEAN"})
+        >>> (all_columns() - categorical()).resolve(schema)
+        ['price', 'active']
+    """
+    return _AllSelector()
+
+
+def columns(*names: str) -> _ColumnsSelector:
+    """Select explicitly named columns.
+
+    Creates a selector for a fixed set of column names. Only columns that
+    exist in the schema at resolution time are returned; non-existent names
+    are silently skipped.
+
+    Args:
+        *names: Column names to select.
+
+    Returns:
+        A selector that resolves to the named columns present in the schema.
+
+    Examples:
+        Select specific columns:
+
+        >>> from sqlearn.core.schema import Schema, columns
+        >>> schema = Schema({"price": "DOUBLE", "qty": "INTEGER", "city": "VARCHAR"})
+        >>> columns("price", "qty").resolve(schema)
+        ['price', 'qty']
+
+        Compose with other selectors:
+
+        >>> from sqlearn.core.schema import numeric
+        >>> (numeric() - columns("qty")).resolve(schema)
+        ['price']
+    """
+    return _ColumnsSelector(names)
 
 
 # ---------------------------------------------------------------------------
