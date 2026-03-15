@@ -284,12 +284,15 @@ class Pipeline:
 
     # --- fit / transform / to_sql ---
 
-    @staticmethod
-    def _finalize_step(step_info: Any) -> None:  # noqa: ANN401
+    def _finalize_step(self, step_info: Any) -> None:  # noqa: ANN401
         """Mark a step fitted and run composition post-fit hooks."""
         step_info.step.columns_ = step_info.columns
         step_info.step.input_schema_ = step_info.input_schema
         step_info.step._fitted = True  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        # Lookup: resolve lookup schema before output_schema computation
+        if hasattr(step_info.step, "_resolve_with_backend"):
+            backend = self._resolve_backend()
+            step_info.step._resolve_with_backend(backend)  # noqa: SLF001
         # Re-compute output schema now that params_/sets_ are populated
         step_info.step.output_schema_ = step_info.step.output_schema(step_info.input_schema)
         # Union/Columns: distribute params to branches and mark fitted
