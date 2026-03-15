@@ -80,6 +80,16 @@ class TestExpressionCreation:
         assert isinstance(cloned, _ExpressionTransformer)
         assert cloned.sql == t.sql
 
+    def test_pickle_roundtrip(self) -> None:
+        import pickle
+
+        t = Expression("price * 2 AS double_price")
+        data = pickle.dumps(t)
+        restored = pickle.loads(data)  # noqa: S301
+        assert isinstance(restored, _ExpressionTransformer)
+        assert restored.sql == t.sql
+        assert restored._alias == t._alias
+
 
 class TestExpressionInPipeline:
     """Expression works in a Pipeline: adds column, composes with prior steps."""
@@ -507,3 +517,44 @@ class TestASTComposition:
         sql = pipe.to_sql()
 
         assert "WITH" not in sql.upper()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Edge Case Tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestEdgeCases:
+    """Edge cases from spec: empty columns, single column, no-placeholder combine."""
+
+    def test_empty_column_list(self) -> None:
+        """custom() with empty column list is a no-op."""
+        conn = _make_numeric_conn()
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline(
+            [custom("{col} * 2", columns=[])],
+            backend=backend,
+        )
+        pipe.fit("data", backend=backend)
+        result = pipe.transform("data", backend=backend)
+
+        # No columns targeted, so values unchanged
+        names = pipe.get_feature_names_out()
+        assert names == ["price", "quantity"]
+        np.testing.assert_allclose(result[:, 0], [1.0, 2.0, 3.0, 4.0, 5.0])
+
+    def test_combine_no_placeholders(self) -> None:
+        """Combine mode with literal expression (no column refs)."""
+        conn = _make_numeric_conn()
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline(
+            [custom("42 AS constant", columns=["price"], mode="combine")],
+            backend=backend,
+        )
+        pipe.fit("data", backend=backend)
+        result = pipe.transform("data", backend=backend)
+
+        names = pipe.get_feature_names_out()
+        assert "constant" in names
+        const_idx = names.index("constant")
+        np.testing.assert_allclose(result[:, const_idx], [42.0] * 5)
