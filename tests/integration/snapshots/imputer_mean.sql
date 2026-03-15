@@ -1,0 +1,1 @@
+SELECT COALESCE(a, 3.0) AS a, COALESCE(b, 32.5) AS b FROM __input__

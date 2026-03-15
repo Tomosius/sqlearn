@@ -1,0 +1,1 @@
+SELECT CASE WHEN color = 'blue' THEN 1 ELSE 0 END AS color_blue, CASE WHEN color = 'green' THEN 1 ELSE 0 END AS color_green, CASE WHEN color = 'red' THEN 1 ELSE 0 END AS color_red, CASE WHEN size = 'large' THEN 1 ELSE 0 END AS size_large, CASE WHEN size = 'medium' THEN 1 ELSE 0 END AS size_medium, CASE WHEN size = 'small' THEN 1 ELSE 0 END AS size_small FROM __input__
