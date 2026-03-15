@@ -499,10 +499,11 @@ class Transformer:
     # --- Operators ---
 
     def __add__(self, other: object) -> Any:
-        """Sequential composition: a + b -> Pipeline([a, b]).
+        """Sequential composition: ``a + b`` -> ``Pipeline([a, b])``.
 
         Returns a new Pipeline containing both transformers.
-        Flattens nested Pipeline operands.
+        Flattens nested Pipeline operands (one level only).
+        Clones all steps so the result is independent.
 
         Args:
             other: Transformer or Pipeline to compose after self.
@@ -510,22 +511,19 @@ class Transformer:
         Returns:
             A new Pipeline, or NotImplemented if type is unsupported.
         """
-        from sqlearn.core.pipeline import (
-            Pipeline,
-            _auto_name,  # pyright: ignore[reportPrivateUsage]
-        )
+        from sqlearn.core.pipeline import Pipeline
 
         if isinstance(other, Pipeline):
-            name = _auto_name(other.steps, self)
-            return Pipeline([(name, self), *other.steps])
+            # Delegate to Pipeline.__radd__ for proper naming and flattening
+            return NotImplemented
         if isinstance(other, Transformer):
-            return Pipeline([self, other])
+            return Pipeline([self.clone(), other.clone()])
         return NotImplemented
 
     def __iadd__(self, other: object) -> Any:
-        """Incremental composition: pipe += step -> NEW Pipeline.
+        """Incremental composition: ``x += step`` -> NEW Pipeline.
 
-        Non-mutating — follows Python numeric convention.
+        Non-mutating -- follows Python numeric convention.
         Returns a new Pipeline, does not modify self.
 
         Args:
