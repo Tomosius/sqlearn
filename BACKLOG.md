@@ -33,7 +33,7 @@ These are ready to work on. Ordered by priority.
 - [x] `io.py` — input resolver (table/file/DataFrame → DuckDB)
 - [x] `errors.py` — error hierarchy (incl. `ClassificationError`, `ProFeatureError`)
 - [x] `compiler.py` — expression composition, CTE promotion
-- [ ] `pipeline.py` — Pipeline: fit, transform, fit_transform, to_sql
+- [x] `pipeline.py` — Pipeline: fit, transform, fit_transform, to_sql
 - [ ] `Imputer` — proves aggregation discovery, COALESCE composition
 - [ ] `StandardScaler` — proves arithmetic composition
 - [ ] `OneHotEncoder` — proves layer boundaries, CASE generation
