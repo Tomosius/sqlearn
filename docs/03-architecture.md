@@ -1800,6 +1800,68 @@ AVG(price) FILTER (WHERE __sq_fold__ != 1)
 AVG(CASE WHEN __sq_fold__ != 1 THEN price END)
 ```
 
+### 4.6b Data Safety Guarantee — Read-Only by Design
+
+**sqlearn NEVER modifies source data.** This is a hard architectural guarantee, not a
+convention. The Backend protocol contains only read operations:
+
+| Method | Operation | Writes to source? |
+|---|---|---|
+| `execute()` | SELECT queries | No |
+| `fetch_one()` | SELECT queries | No |
+| `describe()` | DESCRIBE / schema inspection | No |
+| `register()` | Creates virtual reference to in-memory data | No |
+| `supports()` | Feature capability check | No |
+
+**No INSERT, UPDATE, DELETE, ALTER TABLE, or DROP exists in the Backend protocol.**
+Adding write operations requires extending the protocol — it cannot happen accidentally.
+
+**Materialization strategy — temp views only:**
+
+When sqlearn needs intermediate state (fold columns, layer materialization), it uses
+DuckDB temp views, which are session-scoped and never persist:
+
+```sql
+-- User's table "sales" stays untouched
+-- sqlearn creates a session-scoped temp view that wraps it:
+CREATE TEMP VIEW __sq_source__ AS
+    SELECT *, NTILE(5) OVER (ORDER BY HASH(rowid || '42')) AS __sq_fold__
+    FROM sales;
+
+-- All pipeline queries read from the temp view, not the source table.
+-- The fold column exists ONLY in the view.
+SELECT (price - stats.mean_price) / stats.std_price AS price
+FROM __sq_source__ CROSS JOIN stats
+WHERE __sq_fold__ = :k;
+```
+
+**Temp view properties:**
+
+| Property | Guarantee |
+|---|---|
+| Scope | Current DuckDB session only |
+| Persistence | Disappears when connection closes |
+| Disk writes | None (even for file-based DuckDB) |
+| Visibility | Invisible to other connections |
+| Source impact | Zero — original tables/files untouched |
+
+**For every data path:**
+
+- **File input** (`"train.parquet"`): DuckDB reads the file directly via `read_parquet()`.
+  The file is never modified. Temp views wrap the read expression.
+- **Table input** (`"sales"`): DuckDB reads from the existing table. sqlearn never alters
+  the table schema or data. Temp views add columns like `__sq_fold__` without modifying
+  the source.
+- **DataFrame input** (pandas/polars/arrow): `register()` creates a virtual table reference
+  pointing to the in-memory data. The DataFrame is not copied or modified.
+- **File-based DuckDB** (`DuckDBBackend("path/to/db.duckdb")`): Temp views are still
+  session-scoped and do NOT persist to the database file. The `.duckdb` file is not
+  modified by sqlearn operations.
+
+**This guarantee is enforced at the protocol level.** Any future backend implementation
+(Postgres, Snowflake, BigQuery) must maintain read-only access to source data. Only
+session-scoped temporary objects (views, tables) are permitted for intermediate state.
+
 ### 4.7 Compilation Strategies: Baked vs Self-Contained
 
 Two strategies for how learned parameters appear in compiled SQL.
@@ -1978,6 +2040,15 @@ but the SCHEMA is always identical. No model ever receives an unexpected feature
 Without two-phase discovery, cross-validation on real data is **silently broken** for
 any schema-changing step with cardinality-dependent output. sqlearn is the only library
 that handles this correctly by design.
+
+**Zero-variance columns from superset discovery:** When the superset includes categories
+absent from a fold's training data (e.g., `city_Berlin` when Berlin doesn't appear in
+fold 3), the SQL output contains all-zero (or all-same-value) columns. These are NOT
+dropped from the SQL — the schema must stay consistent across folds. Instead, constant
+columns are detected and skipped at the **output boundary** (numpy handoff), before
+passing features to the model. Detection uses DuckDB's zone maps (`MIN(col) = MAX(col)`)
+for O(1) per-column checks. See Section 16.6 (Compile Once, Execute Many) for the
+full optimization design.
 
 ### 4.8 Fold Column Convention
 

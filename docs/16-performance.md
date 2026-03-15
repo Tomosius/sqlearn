@@ -195,6 +195,85 @@ query is identical across folds (e.g., a static-only layer), share the view:
 (common pattern: Log → Clip → Imputer → Scaler), the static portion is materialized
 once instead of K times.
 
+#### Compile Once, Execute Many (QueryTemplate)
+
+The self-contained CTE strategy (Section 4.7 of architecture) produces fold-parameterized
+SQL — the same query works for any fold by changing `:k`. This optimization makes the
+compilation step explicit and separates the pipeline (compiler) from the CV system (executor).
+
+**The three-step flow:**
+
+1. **Phase 1 — Superset discovery:** Run `discover_sets()` on full training data once.
+   Learn the universe of categories, column types, output schema. This determines the
+   AST structure — identical for every fold.
+
+2. **Compile — Build QueryTemplate:** Compile the self-contained CTE query once from the
+   superset schema. The result is a `QueryTemplate` — a frozen AST with `:k` as the only
+   parameter. The pipeline acts as a compiler, not a state holder.
+
+3. **Phase 2 — Per-fold execution:** For each fold, bind `:k` and execute. DuckDB computes
+   per-fold scalar stats inline via `FILTER (WHERE __sq_fold__ != :k)`. No separate stats
+   storage needed — the SQL IS the computation.
+
+```python
+@dataclass(frozen=True)
+class QueryTemplate:
+    """Pre-compiled AST with fold parameter slot.
+
+    The pipeline compiles this once. The CV system executes it N times.
+    No per-fold state lives on the pipeline — the template is the only artifact.
+    """
+
+    ast: sg.Expression          # self-contained CTE query with :k placeholder
+    superset_schema: Schema     # output schema (consistent across all folds)
+    fold_param: str             # parameter name (default: "__sq_fold__")
+
+    def bind(self, fold: int) -> sg.Expression:
+        """Substitute fold value, return executable AST."""
+        return self.ast.transform(
+            lambda node: exp.Literal.number(fold)
+            if isinstance(node, exp.Parameter) and node.name == self.fold_param
+            else node
+        )
+```
+
+**Why the pipeline must not store fold state:** During CV, `fit()` is called per fold.
+If `params_` is overwritten each time, previous fold stats are lost. With QueryTemplate,
+there are no stored stats — the self-contained CTE computes them inline. The pipeline
+compiles the template and hands it to the CV system. The CV system owns execution.
+
+**Savings:** For a 10-step pipeline with 5-fold CV:
+- Without template: 5 compilations × O(N) classification + AST build each
+- With template: 1 compilation + 5 bind-and-execute (AST node swap is O(nodes))
+
+#### Zero-Variance Column Skipping at Output Boundary
+
+When Phase 1 uses the superset of categories (e.g., OneHotEncoder sees `{A, B, C}`
+globally but fold 3's training data only has `{A, B}`), some folds produce columns
+with all identical values (e.g., `city_C` is always 0 in fold 3).
+
+These columns are handled at the **output boundary**, not in SQL:
+
+- **SQL schema stays consistent** — all folds produce the same columns (guaranteed by
+  superset discovery). This is critical for fold-to-fold comparability.
+- **Constant columns are skipped at numpy handoff** — before passing to the model,
+  check each column for zero variance. Constant columns are excluded from the feature
+  matrix but tracked in metadata for reconstruction.
+- **Detection is O(1) per column in DuckDB** — `SELECT MIN(col) = MAX(col)` uses
+  zone maps (column statistics), no full scan needed.
+- **This is NOT VarianceThreshold** — VarianceThreshold is an explicit pipeline step
+  the user adds. This is an implicit optimization at the output layer that preserves
+  SQL schema integrity while giving the model only informative features.
+
+```python
+# At the output boundary (inside TransformResult or CV executor):
+# 1. Execute fold query → full result with all superset columns
+# 2. Detect constant columns (O(1) per column via zone maps)
+# 3. Exclude from feature matrix, record in metadata
+# 4. Model trains on informative features only
+# 5. All folds have consistent feature indexing after exclusion
+```
+
 ### 16.7 CTE Promotion Strategy
 
 Deep expression nesting hurts SQL readability and can hit database limits. The compiler
