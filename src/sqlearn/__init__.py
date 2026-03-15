@@ -29,6 +29,7 @@ from sqlearn.core.schema import (
     temporal,
 )
 from sqlearn.core.transformer import Transformer
+from sqlearn.scalers.standard import StandardScaler
 
 __all__ = [
     "Backend",
@@ -46,6 +47,7 @@ __all__ = [
     "SQLearnError",
     "Schema",
     "SchemaError",
+    "StandardScaler",
     "StaticViolationError",
     "Transformer",
     "UnseenCategoryError",
