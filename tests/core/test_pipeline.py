@@ -413,7 +413,7 @@ class TestPipelineOperators:
     """Test Pipeline + and += operators."""
 
     def test_pipeline_plus_transformer(self) -> None:
-        """Pipeline + Transformer appends step."""
+        """Pipeline + Transformer appends step with auto-generated name."""
         pipe = Pipeline([("a", _StaticStep())])
         new = pipe + _DynamicStep()
         assert len(new.steps) == 2
@@ -421,7 +421,7 @@ class TestPipelineOperators:
         assert new.steps[1][0].startswith("step_")
 
     def test_pipeline_plus_pipeline(self) -> None:
-        """Pipeline + Pipeline flattens steps."""
+        """Pipeline + Pipeline flattens steps from both into one Pipeline."""
         pipe1 = Pipeline([("a", _StaticStep())])
         pipe2 = Pipeline([("b", _DynamicStep())])
         combined = pipe1 + pipe2
@@ -430,7 +430,7 @@ class TestPipelineOperators:
         assert combined.steps[1][0] == "b"
 
     def test_pipeline_plus_name_collision_raises(self) -> None:
-        """Pipeline + Pipeline with name collision raises."""
+        """Pipeline + Pipeline with name collision raises InvalidStepError."""
         pipe1 = Pipeline([("same", _StaticStep())])
         pipe2 = Pipeline([("same", _DynamicStep())])
         with pytest.raises(InvalidStepError, match="Duplicate step name"):
@@ -451,26 +451,134 @@ class TestPipelineOperators:
         assert len(pipe.steps) == 2
 
     def test_radd_transformer_plus_pipeline(self) -> None:
-        """Transformer + Pipeline via __radd__."""
+        """Transformer + Pipeline via __radd__ prepends step."""
         pipe = Pipeline([("b", _DynamicStep())])
         step = _StaticStep()
         combined = step + pipe  # type: ignore[operator]
         assert len(combined.steps) == 2
         assert combined.steps[1][0] == "b"
 
+    def test_pipeline_plus_pipeline_multi_step(self) -> None:
+        """Pipeline(2 steps) + Pipeline(2 steps) produces Pipeline with 4 steps."""
+        pipe1 = Pipeline([("a", _StaticStep()), ("b", _DynamicStep())])
+        pipe2 = Pipeline([("c", _StaticStep()), ("d", _DynamicStep())])
+        combined = pipe1 + pipe2
+        assert len(combined.steps) == 4
+        assert [n for n, _ in combined.steps] == ["a", "b", "c", "d"]
+
+    def test_three_way_add(self) -> None:
+        """a + b + c chains left-to-right producing a flat 3-step Pipeline."""
+        s1, s2, s3 = _StaticStep(), _DynamicStep(), _StaticStep()
+        result = s1 + s2 + s3
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 3
+
+    def test_pipeline_plus_transformer_preserves_order(self) -> None:
+        """Pipeline + Transformer preserves existing step order with new step at end."""
+        pipe = Pipeline([("x", _StaticStep()), ("y", _DynamicStep())])
+        combined = pipe + _StaticStep()
+        assert combined.steps[0][0] == "x"
+        assert combined.steps[1][0] == "y"
+        assert len(combined.steps) == 3
+
+    def test_transformer_plus_pipeline_preserves_order(self) -> None:
+        """Transformer + Pipeline prepends step before existing pipeline steps."""
+        pipe = Pipeline([("x", _StaticStep()), ("y", _DynamicStep())])
+        step = _StaticStep()
+        combined = step + pipe
+        assert combined.steps[1][0] == "x"
+        assert combined.steps[2][0] == "y"
+        assert len(combined.steps) == 3
+
+    def test_add_non_mutating_original_pipeline_unchanged(self) -> None:
+        """Pipeline + X does not mutate the original Pipeline."""
+        s1 = _StaticStep()
+        pipe = Pipeline([("a", s1)])
+        original_steps = pipe.steps[:]
+        _ = pipe + _DynamicStep()
+        assert pipe.steps == original_steps
+        assert len(pipe.steps) == 1
+
+    def test_add_non_mutating_both_pipelines_unchanged(self) -> None:
+        """Pipeline + Pipeline leaves both original pipelines unchanged."""
+        pipe1 = Pipeline([("a", _StaticStep())])
+        pipe2 = Pipeline([("b", _DynamicStep())])
+        _ = pipe1 + pipe2
+        assert len(pipe1.steps) == 1
+        assert len(pipe2.steps) == 1
+
+    def test_iadd_pipeline_plus_pipeline(self) -> None:
+        """Pipeline += Pipeline flattens and returns new Pipeline."""
+        pipe1 = Pipeline([("a", _StaticStep())])
+        pipe2 = Pipeline([("b", _DynamicStep())])
+        original_id = id(pipe1)
+        pipe1 += pipe2  # type: ignore[assignment]
+        assert id(pipe1) != original_id
+        assert len(pipe1.steps) == 2
+        assert pipe1.steps[0][0] == "a"
+        assert pipe1.steps[1][0] == "b"
+
+    def test_add_clones_steps_for_independence(self) -> None:
+        """Combined pipeline has cloned steps independent from originals."""
+        step = _StaticStep()
+        pipe = Pipeline([("a", step)])
+        combined = pipe + _DynamicStep()
+        # The step in combined is a clone, not the same object
+        assert combined.steps[0][1] is not step
+
+    def test_add_pipeline_plus_pipeline_clones_both_sides(self) -> None:
+        """Pipeline + Pipeline clones steps from both operands."""
+        step1 = _StaticStep()
+        step2 = _DynamicStep()
+        pipe1 = Pipeline([("a", step1)])
+        pipe2 = Pipeline([("b", step2)])
+        combined = pipe1 + pipe2
+        assert combined.steps[0][1] is not step1
+        assert combined.steps[1][1] is not step2
+
+    def test_radd_clones_steps_for_independence(self) -> None:
+        """Transformer + Pipeline clones all steps for independence."""
+        step1 = _StaticStep()
+        step2 = _DynamicStep()
+        pipe = Pipeline([("b", step2)])
+        combined = step1 + pipe
+        assert combined.steps[0][1] is not step1
+        assert combined.steps[1][1] is not step2
+
+    def test_single_step_pipeline_plus_transformer(self) -> None:
+        """Single-step Pipeline + Transformer produces 2-step flat Pipeline."""
+        pipe = Pipeline([_StaticStep()])
+        combined = pipe + _DynamicStep()
+        assert len(combined.steps) == 2
+        assert not isinstance(combined.steps[0][1], Pipeline)
+        assert not isinstance(combined.steps[1][1], Pipeline)
+
+    def test_single_step_pipeline_plus_single_step_pipeline(self) -> None:
+        """Single-step Pipeline + single-step Pipeline produces 2-step Pipeline."""
+        pipe1 = Pipeline([_StaticStep()])
+        pipe2 = Pipeline([_DynamicStep()])
+        combined = pipe1 + pipe2
+        assert len(combined.steps) == 2
+
+    def test_radd_non_transformer_returns_not_implemented(self) -> None:
+        """Pipeline.__radd__(non-Transformer) returns NotImplemented."""
+        pipe = Pipeline([_StaticStep()])
+        result = pipe.__radd__(42)  # type: ignore[arg-type]
+        assert result is NotImplemented
+
 
 class TestTransformerOperators:
     """Test Transformer.__add__ and __iadd__ creating Pipelines."""
 
     def test_transformer_plus_transformer(self) -> None:
-        """Transformer + Transformer creates Pipeline."""
+        """Transformer + Transformer creates a 2-step Pipeline."""
         s1, s2 = _StaticStep(), _DynamicStep()
         result = s1 + s2
         assert isinstance(result, Pipeline)
         assert len(result.steps) == 2
 
     def test_transformer_plus_pipeline(self) -> None:
-        """Transformer + Pipeline prepends."""
+        """Transformer + Pipeline prepends step and flattens."""
         pipe = Pipeline([("b", _DynamicStep())])
         step = _StaticStep()
         result = step + pipe
@@ -483,6 +591,134 @@ class TestTransformerOperators:
         s1 = _StaticStep()
         result = s1.__iadd__(_DynamicStep())
         assert isinstance(result, Pipeline)
+
+    def test_transformer_plus_transformer_clones(self) -> None:
+        """Transformer + Transformer clones both for independence."""
+        s1, s2 = _StaticStep(), _DynamicStep()
+        result = s1 + s2
+        assert result.steps[0][1] is not s1
+        assert result.steps[1][1] is not s2
+
+    def test_transformer_plus_non_transformer(self) -> None:
+        """Transformer + int returns NotImplemented."""
+        result = _StaticStep().__add__(42)
+        assert result is NotImplemented
+
+
+class TestPipelineOperatorIntegration:
+    """Test that pipelines created via + actually fit/transform/to_sql."""
+
+    def test_combined_pipeline_fit_transform(self, tmp_path: Any) -> None:
+        """Pipeline built with + can fit and transform data end-to-end."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute(
+            "CREATE TABLE data AS SELECT "
+            "1.0 AS x, 2.0 AS y UNION ALL SELECT "
+            "3.0, 4.0 UNION ALL SELECT "
+            "5.0, 6.0"
+        )
+        conn.close()
+
+        pipe1 = Pipeline([_StaticStep()])
+        pipe2 = Pipeline([_StaticStep()])
+        combined = pipe1 + pipe2
+
+        backend = DuckDBBackend(db_path)
+        combined.fit("data", backend=backend)
+        result = combined.transform("data", backend=backend)
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (3, 2)
+        # Static step doubles: 1*2*2=4, 2*2*2=8, etc.
+        np.testing.assert_array_equal(result[0], [4.0, 8.0])
+
+    def test_combined_pipeline_to_sql(self, tmp_path: Any) -> None:
+        """Pipeline built with + generates valid SQL via to_sql()."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y")
+        conn.close()
+
+        pipe1 = Pipeline([_StaticStep()])
+        pipe2 = Pipeline([_StaticStep()])
+        combined = pipe1 + pipe2
+
+        backend = DuckDBBackend(db_path)
+        combined.fit("data", backend=backend)
+        sql = combined.to_sql()
+        assert isinstance(sql, str)
+        assert "SELECT" in sql
+
+    def test_transformer_plus_transformer_fit_transform(self, tmp_path: Any) -> None:
+        """Pipeline built via Transformer + Transformer can fit and transform."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y UNION ALL SELECT 3.0, 4.0")
+        conn.close()
+
+        combined = _StaticStep() + _StaticStep()
+        backend = DuckDBBackend(db_path)
+        combined.fit("data", backend=backend)
+        result = combined.transform("data", backend=backend)
+        assert result.shape == (2, 2)
+        np.testing.assert_array_equal(result[0], [4.0, 8.0])
+
+
+class TestMergeSteps:
+    """Test _merge_steps helper for auto-name collision resolution."""
+
+    def test_no_collision(self) -> None:
+        """Non-colliding names are preserved as-is."""
+        from sqlearn.core.pipeline import _merge_steps
+
+        left = [("a", _StaticStep())]
+        right = [("b", _DynamicStep())]
+        result = _merge_steps(left, right)
+        assert [n for n, _ in result] == ["a", "b"]
+
+    def test_auto_name_collision_renumbered(self) -> None:
+        """Colliding step_NN names on the right are renumbered."""
+        from sqlearn.core.pipeline import _merge_steps
+
+        left = [("step_00", _StaticStep())]
+        right = [("step_00", _DynamicStep())]
+        result = _merge_steps(left, right)
+        assert len(result) == 2
+        assert result[0][0] == "step_00"
+        assert result[1][0] == "step_01"
+
+    def test_user_name_collision_preserved(self) -> None:
+        """User-given names (non step_NN) are NOT renamed on collision.
+
+        User-given name collisions are intentionally left for
+        _normalize_steps to catch with a clear error message.
+        """
+        from sqlearn.core.pipeline import _merge_steps
+
+        left = [("my_step", _StaticStep())]
+        right = [("my_step", _DynamicStep())]
+        result = _merge_steps(left, right)
+        # Both kept — _normalize_steps will catch the duplicate
+        assert len(result) == 2
+        assert result[0][0] == "my_step"
+        assert result[1][0] == "my_step"
+
+    def test_multiple_auto_name_collisions(self) -> None:
+        """Multiple colliding auto-names are each renumbered sequentially."""
+        from sqlearn.core.pipeline import _merge_steps
+
+        left = [("step_00", _StaticStep()), ("step_01", _DynamicStep())]
+        right = [("step_00", _StaticStep()), ("step_01", _DynamicStep())]
+        result = _merge_steps(left, right)
+        assert len(result) == 4
+        names = [n for n, _ in result]
+        assert len(set(names)) == 4  # all unique
 
 
 class TestPipelineClone:

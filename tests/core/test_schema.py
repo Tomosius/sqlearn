@@ -14,8 +14,10 @@ from sqlearn.core.schema import (
     Schema,
     _classify_type,
     _normalize_type,
+    all_columns,
     boolean,
     categorical,
+    columns,
     dtype,
     matching,
     numeric,
@@ -737,3 +739,406 @@ class TestExports:
         import sqlearn
 
         assert not hasattr(sqlearn, "resolve_columns")
+
+    def test_all_columns_from_package(self) -> None:
+        """all_columns is importable from sqlearn."""
+        import sqlearn
+
+        assert sqlearn.all_columns is all_columns
+
+    def test_columns_from_package(self) -> None:
+        """columns is importable from sqlearn."""
+        import sqlearn
+
+        assert sqlearn.columns is columns
+
+
+# ---------------------------------------------------------------------------
+# Selector composition operators
+# ---------------------------------------------------------------------------
+
+
+class TestUnionOperator:
+    """Test the | (union) operator on ColumnSelector."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Schema with diverse types for composition tests."""
+        return Schema(
+            {
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+                "created": "TIMESTAMP",
+                "active": "BOOLEAN",
+            }
+        )
+
+    def test_union_two_types(self, schema: Schema) -> None:
+        """Union of numeric and boolean selects columns from both."""
+        result = (numeric() | boolean()).resolve(schema)
+        assert result == ["price", "qty", "active"]
+
+    def test_union_preserves_order(self, schema: Schema) -> None:
+        """Union preserves left-first order and deduplicates."""
+        result = (boolean() | numeric()).resolve(schema)
+        assert result == ["active", "price", "qty"]
+
+    def test_union_no_duplicates(self, schema: Schema) -> None:
+        """Union of overlapping selectors has no duplicates."""
+        result = (numeric() | numeric()).resolve(schema)
+        assert result == ["price", "qty"]
+
+    def test_union_with_pattern(self, schema: Schema) -> None:
+        """Union with a pattern selector works."""
+        result = (numeric() | matching("ci*")).resolve(schema)
+        assert result == ["price", "qty", "city"]
+
+    def test_union_empty_left(self) -> None:
+        """Union where left matches nothing returns right only."""
+        s = Schema({"city": "VARCHAR"})
+        result = (numeric() | categorical()).resolve(s)
+        assert result == ["city"]
+
+    def test_union_empty_right(self) -> None:
+        """Union where right matches nothing returns left only."""
+        s = Schema({"price": "DOUBLE"})
+        result = (numeric() | categorical()).resolve(s)
+        assert result == ["price"]
+
+    def test_union_both_empty(self) -> None:
+        """Union where both match nothing returns empty list."""
+        s = Schema({"data": "BLOB"})
+        result = (numeric() | categorical()).resolve(s)
+        assert result == []
+
+    def test_union_is_column_selector(self) -> None:
+        """Union result is a ColumnSelector."""
+        assert isinstance(numeric() | boolean(), ColumnSelector)
+
+    def test_union_repr(self) -> None:
+        """Union selector has readable repr."""
+        sel = numeric() | boolean()
+        assert repr(sel) == "(numeric() | boolean())"
+
+
+class TestIntersectionOperator:
+    """Test the & (intersection) operator on ColumnSelector."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Schema with columns sharing name and type patterns."""
+        return Schema(
+            {
+                "price_usd": "DOUBLE",
+                "price_eur": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+            }
+        )
+
+    def test_intersection_type_and_pattern(self, schema: Schema) -> None:
+        """Intersection of numeric and pattern keeps only matches."""
+        result = (numeric() & matching("price_*")).resolve(schema)
+        assert result == ["price_usd", "price_eur"]
+
+    def test_intersection_no_overlap(self, schema: Schema) -> None:
+        """Intersection with no overlap returns empty list."""
+        result = (categorical() & numeric()).resolve(schema)
+        assert result == []
+
+    def test_intersection_full_overlap(self, schema: Schema) -> None:
+        """Intersection where both match same columns returns those columns."""
+        result = (numeric() & numeric()).resolve(schema)
+        assert result == ["price_usd", "price_eur", "qty"]
+
+    def test_intersection_preserves_right_order(self, schema: Schema) -> None:
+        """Intersection preserves order from the right selector."""
+        # matching("*") yields all columns, numeric() filters
+        result = (matching("*") & numeric()).resolve(schema)
+        assert result == ["price_usd", "price_eur", "qty"]
+
+    def test_intersection_is_column_selector(self) -> None:
+        """Intersection result is a ColumnSelector."""
+        assert isinstance(numeric() & matching("*"), ColumnSelector)
+
+    def test_intersection_repr(self) -> None:
+        """Intersection selector has readable repr."""
+        sel = numeric() & matching("price_*")
+        assert repr(sel) == "(numeric() & matching('price_*'))"
+
+
+class TestNegationOperator:
+    """Test the ~ (negation) operator on ColumnSelector."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Schema with diverse types for negation tests."""
+        return Schema(
+            {
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+                "active": "BOOLEAN",
+            }
+        )
+
+    def test_negate_numeric(self, schema: Schema) -> None:
+        """Negating numeric selects non-numeric columns."""
+        result = (~numeric()).resolve(schema)
+        assert result == ["city", "active"]
+
+    def test_negate_categorical(self, schema: Schema) -> None:
+        """Negating categorical selects non-categorical columns."""
+        result = (~categorical()).resolve(schema)
+        assert result == ["price", "qty", "active"]
+
+    def test_negate_all_types(self) -> None:
+        """Negating a selector that matches everything returns empty list."""
+        s = Schema({"a": "INT", "b": "DOUBLE"})
+        result = (~numeric()).resolve(s)
+        assert result == []
+
+    def test_negate_no_types(self) -> None:
+        """Negating a selector that matches nothing returns all columns."""
+        s = Schema({"a": "INT"})
+        result = (~categorical()).resolve(s)
+        assert result == ["a"]
+
+    def test_double_negation(self, schema: Schema) -> None:
+        """Double negation returns original selection."""
+        result = (~~numeric()).resolve(schema)
+        assert result == ["price", "qty"]
+
+    def test_negation_preserves_schema_order(self, schema: Schema) -> None:
+        """Negation returns columns in schema insertion order."""
+        result = (~boolean()).resolve(schema)
+        assert result == ["price", "qty", "city"]
+
+    def test_negation_is_column_selector(self) -> None:
+        """Negation result is a ColumnSelector."""
+        assert isinstance(~numeric(), ColumnSelector)
+
+    def test_negation_repr(self) -> None:
+        """Negation selector has readable repr."""
+        sel = ~numeric()
+        assert repr(sel) == "~numeric()"
+
+
+class TestDifferenceOperator:
+    """Test the - (difference) operator on ColumnSelector."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Schema with varied types and name patterns."""
+        return Schema(
+            {
+                "id_user": "INTEGER",
+                "id_order": "INTEGER",
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+            }
+        )
+
+    def test_difference_removes_pattern(self, schema: Schema) -> None:
+        """Difference removes columns matching the right selector."""
+        result = (numeric() - matching("id_*")).resolve(schema)
+        assert result == ["price", "qty"]
+
+    def test_difference_no_overlap(self, schema: Schema) -> None:
+        """Difference with no overlap returns left unchanged."""
+        result = (numeric() - categorical()).resolve(schema)
+        assert result == ["id_user", "id_order", "price", "qty"]
+
+    def test_difference_full_overlap(self, schema: Schema) -> None:
+        """Difference with full overlap returns empty list."""
+        result = (numeric() - numeric()).resolve(schema)
+        assert result == []
+
+    def test_difference_preserves_left_order(self, schema: Schema) -> None:
+        """Difference preserves order from the left selector."""
+        result = (numeric() - matching("id_*")).resolve(schema)
+        assert result == ["price", "qty"]
+
+    def test_difference_is_column_selector(self) -> None:
+        """Difference result is a ColumnSelector."""
+        assert isinstance(numeric() - matching("*"), ColumnSelector)
+
+    def test_difference_repr(self) -> None:
+        """Difference selector has readable repr."""
+        sel = numeric() - matching("id_*")
+        assert repr(sel) == "(numeric() - matching('id_*'))"
+
+
+class TestAllColumnsSelector:
+    """Test all_columns() selector."""
+
+    def test_selects_all(self) -> None:
+        """all_columns() returns every column."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "BOOLEAN"})
+        assert all_columns().resolve(s) == ["a", "b", "c"]
+
+    def test_empty_schema(self) -> None:
+        """all_columns() on empty schema returns empty list."""
+        s = Schema({})
+        assert all_columns().resolve(s) == []
+
+    def test_preserves_order(self) -> None:
+        """all_columns() preserves schema insertion order."""
+        s = Schema({"z": "INT", "a": "INT", "m": "INT"})
+        assert all_columns().resolve(s) == ["z", "a", "m"]
+
+    def test_is_column_selector(self) -> None:
+        """all_columns() returns a ColumnSelector."""
+        assert isinstance(all_columns(), ColumnSelector)
+
+    def test_repr(self) -> None:
+        """all_columns() has readable repr."""
+        assert repr(all_columns()) == "all_columns()"
+
+    def test_minus_categorical(self) -> None:
+        """all_columns() - categorical() excludes categorical columns."""
+        s = Schema({"price": "DOUBLE", "city": "VARCHAR", "active": "BOOLEAN"})
+        result = (all_columns() - categorical()).resolve(s)
+        assert result == ["price", "active"]
+
+    def test_with_resolve_columns(self) -> None:
+        """all_columns() works through resolve_columns."""
+        s = Schema({"a": "INT", "b": "VARCHAR"})
+        assert resolve_columns(s, all_columns()) == ["a", "b"]
+
+
+class TestColumnsSelector:
+    """Test columns() selector."""
+
+    def test_selects_named(self) -> None:
+        """columns() selects exactly the named columns."""
+        s = Schema({"price": "DOUBLE", "qty": "INTEGER", "city": "VARCHAR"})
+        result = columns("price", "qty").resolve(s)
+        assert result == ["price", "qty"]
+
+    def test_preserves_argument_order(self) -> None:
+        """columns() preserves the order of the arguments."""
+        s = Schema({"a": "INT", "b": "INT", "c": "INT"})
+        result = columns("c", "a").resolve(s)
+        assert result == ["c", "a"]
+
+    def test_skips_nonexistent(self) -> None:
+        """columns() silently skips names not in the schema."""
+        s = Schema({"price": "DOUBLE"})
+        result = columns("price", "nonexistent").resolve(s)
+        assert result == ["price"]
+
+    def test_all_nonexistent(self) -> None:
+        """columns() returns empty list when no names match."""
+        s = Schema({"price": "DOUBLE"})
+        result = columns("missing", "absent").resolve(s)
+        assert result == []
+
+    def test_empty_args(self) -> None:
+        """columns() with no args returns empty list."""
+        s = Schema({"price": "DOUBLE"})
+        result = columns().resolve(s)
+        assert result == []
+
+    def test_no_duplicates(self) -> None:
+        """columns() with duplicate names returns each once."""
+        s = Schema({"a": "INT", "b": "INT"})
+        result = columns("a", "a", "b").resolve(s)
+        assert result == ["a", "a", "b"]  # mirrors user intent
+
+    def test_is_column_selector(self) -> None:
+        """columns() returns a ColumnSelector."""
+        assert isinstance(columns("a"), ColumnSelector)
+
+    def test_repr_single(self) -> None:
+        """columns() with one name has readable repr."""
+        assert repr(columns("price")) == "columns('price')"
+
+    def test_repr_multiple(self) -> None:
+        """columns() with multiple names has readable repr."""
+        assert repr(columns("price", "qty")) == "columns('price', 'qty')"
+
+    def test_repr_empty(self) -> None:
+        """columns() with no names has readable repr."""
+        assert repr(columns()) == "columns()"
+
+    def test_with_resolve_columns(self) -> None:
+        """columns() works through resolve_columns."""
+        s = Schema({"a": "INT", "b": "VARCHAR", "c": "DOUBLE"})
+        assert resolve_columns(s, columns("a", "c")) == ["a", "c"]
+
+    def test_composed_with_difference(self) -> None:
+        """columns() can be used as the right side of difference."""
+        s = Schema({"price": "DOUBLE", "qty": "INTEGER", "city": "VARCHAR"})
+        result = (numeric() - columns("qty")).resolve(s)
+        assert result == ["price"]
+
+
+# ---------------------------------------------------------------------------
+# Composition chains
+# ---------------------------------------------------------------------------
+
+
+class TestCompositionChains:
+    """Test chaining multiple composition operators."""
+
+    @pytest.fixture
+    def schema(self) -> Schema:
+        """Schema with varied types and name patterns for chain tests."""
+        return Schema(
+            {
+                "id_user": "INTEGER",
+                "id_order": "BIGINT",
+                "price": "DOUBLE",
+                "qty": "INTEGER",
+                "city": "VARCHAR",
+                "name": "TEXT",
+                "created": "TIMESTAMP",
+                "active": "BOOLEAN",
+            }
+        )
+
+    def test_union_then_difference(self, schema: Schema) -> None:
+        """(numeric() | boolean()) - matching('id_*') chains correctly."""
+        result = ((numeric() | boolean()) - matching("id_*")).resolve(schema)
+        assert result == ["price", "qty", "active"]
+
+    def test_negation_then_intersection(self, schema: Schema) -> None:
+        """(~categorical()) & matching('pr*') chains correctly."""
+        result = ((~categorical()) & matching("pr*")).resolve(schema)
+        assert result == ["price"]
+
+    def test_triple_union(self, schema: Schema) -> None:
+        """Three-way union selects from all three."""
+        result = (numeric() | categorical() | boolean()).resolve(schema)
+        assert result == ["id_user", "id_order", "price", "qty", "city", "name", "active"]
+
+    def test_difference_chain(self, schema: Schema) -> None:
+        """numeric() - matching('id_*') - columns('qty') removes both."""
+        result = (numeric() - matching("id_*") - columns("qty")).resolve(schema)
+        assert result == ["price"]
+
+    def test_all_minus_union(self, schema: Schema) -> None:
+        """all_columns() - (categorical() | temporal()) works."""
+        result = (all_columns() - (categorical() | temporal())).resolve(schema)
+        assert result == ["id_user", "id_order", "price", "qty", "active"]
+
+    def test_intersection_preserves_subset(self, schema: Schema) -> None:
+        """Intersection of all_columns() with numeric() equals numeric()."""
+        result = (all_columns() & numeric()).resolve(schema)
+        assert result == numeric().resolve(schema)
+
+    def test_complex_chain_repr(self) -> None:
+        """Complex composition has readable repr."""
+        sel = (numeric() | boolean()) - matching("id_*")
+        assert "numeric()" in repr(sel)
+        assert "boolean()" in repr(sel)
+        assert "matching('id_*')" in repr(sel)
+
+    def test_composed_selectors_work_with_resolve_columns(self, schema: Schema) -> None:
+        """Composed selectors work through resolve_columns."""
+        sel = numeric() - matching("id_*")
+        result = resolve_columns(schema, sel)
+        assert result == ["price", "qty"]
