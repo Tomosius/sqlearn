@@ -123,6 +123,39 @@ class Schema:
     Args:
         columns: Mapping of column names to DuckDB SQL type strings.
             Example: ``{"price": "DOUBLE", "city": "VARCHAR"}``
+
+    Raises:
+        SchemaError: If column names use the reserved ``__sq_*__`` prefix.
+
+    Examples:
+        Create a schema and inspect it:
+
+        >>> from sqlearn.core.schema import Schema
+        >>> schema = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        >>> schema.numeric()
+        ['price']
+        >>> schema.categorical()
+        ['city']
+        >>> schema.column_category("price")
+        'numeric'
+
+        Immutable mutations return new schemas:
+
+        >>> new = schema.add({"quantity": "INTEGER"})
+        >>> len(new)  # 3 columns
+        3
+        >>> len(schema)  # original unchanged
+        2
+
+        Drop and rename columns:
+
+        >>> trimmed = schema.drop(["city"])
+        >>> renamed = schema.rename({"price": "cost"})
+
+    See Also:
+        :func:`~sqlearn.core.schema.resolve_columns`: Resolve column specs.
+        :func:`~sqlearn.core.schema.numeric`: Select numeric columns.
+        :func:`~sqlearn.core.schema.matching`: Select columns by pattern.
     """
 
     columns: dict[str, str]

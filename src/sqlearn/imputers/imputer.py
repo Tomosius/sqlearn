@@ -36,6 +36,13 @@ class Imputer(Transformer):
     3. ``Imputer(columns=["a","b"], strategy="median")`` — explicit columns
     4. ``Imputer({"price": "mean", "qty": 0})`` — per-column dict mode
 
+    Generated SQL (mean strategy)::
+
+        SELECT
+          COALESCE(price, 3.0) AS price,
+          COALESCE(quantity, 32.5) AS quantity
+        FROM __input__
+
     Args:
         strategy: Imputation strategy. One of ``"auto"``, ``"mean"``,
             ``"median"``, ``"most_frequent"``, ``"zero"``, or a dict
@@ -44,14 +51,47 @@ class Imputer(Transformer):
             via ``_default_columns = "all"``. Ignored in dict mode
             (columns come from dict keys).
 
-    Example::
+    Raises:
+        NotFittedError: If ``transform()`` or ``to_sql()`` is called
+            before ``fit()``.
+        FitError: If the input data has issues that prevent fitting
+            (e.g. empty table, all-NULL column).
 
-        import sqlearn as sq
+    Examples:
+        Auto strategy — picks median for numeric, most_frequent for
+        categorical:
 
-        pipe = sq.Pipeline([sq.Imputer()])
-        pipe.fit("train.parquet")
-        result = pipe.transform("test.parquet")  # no NULLs
-        sql = pipe.to_sql()  # contains COALESCE(...)
+        >>> import sqlearn as sq
+        >>> pipe = sq.Pipeline([sq.Imputer()])
+        >>> pipe.fit("train.parquet")
+        >>> result = pipe.transform("test.parquet")
+        >>> pipe.to_sql()  # COALESCE(col, learned_value) per column
+
+        Single strategy for all columns:
+
+        >>> pipe = sq.Pipeline([sq.Imputer(strategy="mean")])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # COALESCE(col, AVG(col)) for every column
+
+        Per-column dict — mix strategies and constants:
+
+        >>> imputer = sq.Imputer({"price": "mean", "qty": 0, "status": "active"})
+        >>> pipe = sq.Pipeline([imputer])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()
+        ... # COALESCE(price, 42.5), COALESCE(qty, 0), COALESCE(status, 'active')
+
+        Compose with StandardScaler (expressions nest automatically):
+
+        >>> pipe = sq.Pipeline([sq.Imputer(), sq.StandardScaler()])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()
+        ... # (COALESCE(price, 3.0) - 3.0) / NULLIF(1.58, 0) AS price
+
+    See Also:
+        :class:`~sqlearn.scalers.standard.StandardScaler`: Scale after imputing.
+        :class:`~sqlearn.encoders.onehot.OneHotEncoder`: Encode categoricals.
+        :class:`~sqlearn.core.pipeline.Pipeline`: Compose transformers.
     """
 
     _default_columns: str = "all"  # pyright: ignore[reportIncompatibleVariableOverride]

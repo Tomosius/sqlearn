@@ -107,6 +107,15 @@ class Pipeline:
     - Tuple list: ``[("impute", Imputer()), ("scale", StandardScaler())]``
     - Dict: ``{"impute": Imputer(), "scale": StandardScaler()}``
 
+    Generated SQL (3-step pipeline)::
+
+        SELECT
+          (COALESCE(price, 3.0) - 3.0) / NULLIF(1.58, 0) AS price,
+          (COALESCE(quantity, 35.0) - 32.5) / NULLIF(14.79, 0) AS quantity,
+          CASE WHEN COALESCE(city, 'London') = 'London' THEN 1 ELSE 0 END AS city_london,
+          CASE WHEN COALESCE(city, 'London') = 'Paris' THEN 1 ELSE 0 END AS city_paris
+        FROM __input__
+
     Args:
         steps: Pipeline steps in any of the three formats above.
         backend: Backend config — str (file path), DuckDBBackend instance,
@@ -115,6 +124,51 @@ class Pipeline:
     Raises:
         InvalidStepError: If steps are empty, contain non-Transformers,
             or have duplicate names.
+
+    Examples:
+        Basic pipeline with auto-named steps:
+
+        >>> import sqlearn as sq
+        >>> pipe = sq.Pipeline(
+        ...     [
+        ...         sq.Imputer(),
+        ...         sq.StandardScaler(),
+        ...         sq.OneHotEncoder(),
+        ...     ]
+        ... )
+        >>> pipe.fit("train.parquet", y="target")
+        >>> X = pipe.transform("test.parquet")  # numpy array
+        >>> sql = pipe.to_sql()  # valid DuckDB SQL
+
+        Named steps for easier access:
+
+        >>> pipe = sq.Pipeline(
+        ...     [
+        ...         ("impute", sq.Imputer()),
+        ...         ("scale", sq.StandardScaler()),
+        ...     ]
+        ... )
+        >>> pipe.fit("data.parquet")
+        >>> pipe.named_steps["scale"]  # access by name
+
+        Compose pipelines with ``+``:
+
+        >>> pipe1 = sq.Pipeline([sq.Imputer()])
+        >>> pipe2 = sq.Pipeline([sq.StandardScaler()])
+        >>> combined = pipe1 + pipe2  # new pipeline with both steps
+
+        Get output column names:
+
+        >>> pipe = sq.Pipeline([sq.OneHotEncoder()])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.get_feature_names_out()
+        ['city_london', 'city_paris', 'city_tokyo']
+
+    See Also:
+        :class:`~sqlearn.core.transformer.Transformer`: Base class for steps.
+        :class:`~sqlearn.imputers.imputer.Imputer`: Fill missing values.
+        :class:`~sqlearn.scalers.standard.StandardScaler`: Standardize numerics.
+        :class:`~sqlearn.encoders.onehot.OneHotEncoder`: Encode categoricals.
     """
 
     def __init__(

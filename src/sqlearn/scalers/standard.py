@@ -19,9 +19,16 @@ class StandardScaler(Transformer):
     """Standardize numeric columns to zero mean and unit variance via SQL.
 
     Each numeric column is transformed to ``(col - mean) / NULLIF(std, 0)``
-    where mean and std are the population statistics learned during fit().
-    Safe division via NULLIF ensures zero-variance columns produce NULL
+    where mean and std are the population statistics learned during ``fit()``.
+    Safe division via ``NULLIF`` ensures zero-variance columns produce NULL
     instead of division-by-zero errors.
+
+    Generated SQL::
+
+        SELECT
+          (price - 3.0) / NULLIF(1.41, 0) AS price,
+          (quantity - 30.0) / NULLIF(14.14, 0) AS quantity
+        FROM __input__
 
     Args:
         with_mean: If True (default), center data by subtracting the mean.
@@ -30,14 +37,46 @@ class StandardScaler(Transformer):
         columns: Column specification override. Defaults to all numeric
             columns via ``_default_columns = "numeric"``.
 
-    Example::
+    Raises:
+        NotFittedError: If ``transform()`` or ``to_sql()`` is called
+            before ``fit()``.
+        FitError: If the input data has issues that prevent fitting
+            (e.g. empty table, all-NULL column).
 
-        import sqlearn as sq
+    Examples:
+        Basic usage — standardize all numeric columns:
 
-        pipe = sq.Pipeline([sq.StandardScaler()])
-        pipe.fit("train.parquet")
-        result = pipe.transform("test.parquet")  # zero mean, unit variance
-        sql = pipe.to_sql()  # valid DuckDB SQL
+        >>> import sqlearn as sq
+        >>> pipe = sq.Pipeline([sq.StandardScaler()])
+        >>> pipe.fit("train.parquet")
+        >>> result = pipe.transform("test.parquet")
+        >>> sql = pipe.to_sql()
+
+        Center only (no variance scaling):
+
+        >>> scaler = sq.StandardScaler(with_std=False)
+        >>> pipe = sq.Pipeline([scaler])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # (col - mean) AS col, no division
+
+        Scale specific columns only:
+
+        >>> scaler = sq.StandardScaler(columns=["price", "score"])
+        >>> pipe = sq.Pipeline([scaler])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # only price and score are scaled
+
+        Compose with Imputer (expressions nest automatically):
+
+        >>> pipe = sq.Pipeline([sq.Imputer(), sq.StandardScaler()])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()
+        ... # (COALESCE(price, 3.0) - 3.0) / NULLIF(1.58, 0) AS price
+
+    See Also:
+        :class:`~sqlearn.imputers.imputer.Imputer`: Fill NULLs before scaling.
+        :class:`~sqlearn.encoders.onehot.OneHotEncoder`: Encode categoricals.
+        :class:`~sqlearn.core.pipeline.Pipeline`: Compose transformers.
     """
 
     _default_columns: str = "numeric"  # pyright: ignore[reportIncompatibleVariableOverride]

@@ -20,8 +20,51 @@ if TYPE_CHECKING:
 class Transformer:
     """Base class for all sqlearn transformers.
 
-    Subclasses override discover(), expressions(), and optionally
-    discover_sets(), query(), and output_schema() to define behavior.
+    Subclasses override ``discover()``, ``expressions()``, and optionally
+    ``discover_sets()``, ``query()``, and ``output_schema()`` to define
+    how data statistics are learned and how SQL expressions are generated.
+
+    The two key methods:
+
+    - ``discover()`` returns sqlglot aggregates that the compiler executes
+      during ``fit()`` to learn statistics (e.g. AVG, STDDEV_POP).
+    - ``expressions()`` returns sqlglot AST nodes that compose inline into
+      the final SQL SELECT (e.g. ``(col - mean) / NULLIF(std, 0)``).
+
+    Examples:
+        Create a custom transformer (mean centering):
+
+        >>> import sqlglot.expressions as exp
+        >>> import sqlearn as sq
+        >>>
+        >>> class MeanCenterer(sq.Transformer):
+        ...     _default_columns = "numeric"
+        ...     _classification = "dynamic"
+        ...
+        ...     def discover(self, columns, schema, y_column=None):
+        ...         return {
+        ...             f"{col}__mean": exp.Avg(this=exp.Column(this=col))
+        ...             for col in columns
+        ...         }
+        ...
+        ...     def expressions(self, columns, exprs):
+        ...         return {
+        ...             col: exp.Sub(
+        ...                 this=exprs[col],
+        ...                 expression=exp.Literal.number(self.params_[f"{col}__mean"]),
+        ...             )
+        ...             for col in columns
+        ...         }
+
+        Use it in a pipeline:
+
+        >>> pipe = sq.Pipeline([MeanCenterer()])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # SELECT (price - 42.5) AS price FROM __input__
+
+    See Also:
+        :class:`~sqlearn.core.pipeline.Pipeline`: Compose transformers.
+        :class:`~sqlearn.scalers.standard.StandardScaler`: Built-in example.
     """
 
     # --- Class attributes (set by subclasses) ---

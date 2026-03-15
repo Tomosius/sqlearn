@@ -23,10 +23,18 @@ class OneHotEncoder(Transformer):
 
     Each unique category value in a categorical column becomes a new binary
     column with values 0 or 1. The original categorical column is dropped.
-    Categories are learned during fit() via ``SELECT DISTINCT``.
+    Categories are learned during ``fit()`` via ``SELECT DISTINCT``.
 
     Safe defaults: categories are sorted alphabetically and truncated to
     ``max_categories`` to prevent column explosion on high-cardinality columns.
+
+    Generated SQL::
+
+        SELECT
+          CASE WHEN city = 'London' THEN 1 ELSE 0 END AS city_london,
+          CASE WHEN city = 'Paris' THEN 1 ELSE 0 END AS city_paris,
+          CASE WHEN city = 'Tokyo' THEN 1 ELSE 0 END AS city_tokyo
+        FROM __input__
 
     Args:
         max_categories: Maximum number of categories per column.
@@ -35,14 +43,54 @@ class OneHotEncoder(Transformer):
         columns: Column specification override. Defaults to all categorical
             columns via ``_default_columns = "categorical"``.
 
-    Example::
+    Raises:
+        NotFittedError: If ``transform()`` or ``to_sql()`` is called
+            before ``fit()``.
+        FitError: If the input data has issues that prevent fitting
+            (e.g. empty table).
+        SchemaError: If specified columns are not found in the schema.
 
-        import sqlearn as sq
+    Examples:
+        Basic usage — encode all categorical columns:
 
-        pipe = sq.Pipeline([sq.OneHotEncoder()])
-        pipe.fit("train.parquet")
-        result = pipe.transform("test.parquet")  # binary indicator columns
-        sql = pipe.to_sql()  # contains CASE WHEN ...
+        >>> import sqlearn as sq
+        >>> pipe = sq.Pipeline([sq.OneHotEncoder()])
+        >>> pipe.fit("train.parquet")
+        >>> result = pipe.transform("test.parquet")
+        >>> pipe.to_sql()
+        ... # CASE WHEN city = 'London' THEN 1 ELSE 0 END AS city_london, ...
+
+        Limit categories to prevent column explosion:
+
+        >>> encoder = sq.OneHotEncoder(max_categories=5)
+        >>> pipe = sq.Pipeline([encoder])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # at most 5 CASE WHEN per column
+
+        Encode specific columns only:
+
+        >>> encoder = sq.OneHotEncoder(columns=["city", "color"])
+        >>> pipe = sq.Pipeline([encoder])
+        >>> pipe.fit("data.parquet")
+        >>> pipe.to_sql()  # only city and color are encoded
+
+        Full pipeline — impute, scale numerics, encode categoricals:
+
+        >>> pipe = sq.Pipeline(
+        ...     [
+        ...         sq.Imputer(),
+        ...         sq.StandardScaler(),
+        ...         sq.OneHotEncoder(),
+        ...     ]
+        ... )
+        >>> pipe.fit("data.parquet", y="target")
+        >>> pipe.to_sql()
+        ... # COALESCE + scaling for numerics, CASE WHEN for categoricals
+
+    See Also:
+        :class:`~sqlearn.imputers.imputer.Imputer`: Fill NULLs before encoding.
+        :class:`~sqlearn.scalers.standard.StandardScaler`: Scale numeric columns.
+        :class:`~sqlearn.core.pipeline.Pipeline`: Compose transformers.
     """
 
     _default_columns: str = "categorical"  # pyright: ignore[reportIncompatibleVariableOverride]
