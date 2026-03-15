@@ -174,9 +174,14 @@ def query(self, input_query):
 
 ### 3. Export from `__init__.py`
 
+Two exports needed — folder-level AND top-level:
+
 ```python
 # src/sqlearn/<folder>/__init__.py
 from .my_transformer import MyTransformer
+
+# src/sqlearn/__init__.py — add import + __all__ entry
+from sqlearn.<folder>.my_transformer import MyTransformer
 ```
 
 ### 4. Write tests
@@ -219,6 +224,21 @@ exp.Nullif(this=exp.Literal.number(std), expression=exp.Literal.number(0))
 from sqlearn.stats.aggregates import Mean, Std
 # Instead of writing exp.Avg(...) directly
 ```
+
+## Thread Safety, Clone, Pickle
+
+Transformers are **NOT thread-safe**. Use `clone()` for concurrent access:
+
+```python
+pipe_copy = pipe.clone()  # independent copy with own params_/sets_
+```
+
+All transformers support pickle serialization and `copy.deepcopy()`. Clone produces
+an independent copy — modifying or re-fitting the clone does not affect the original.
+
+When implementing a new transformer, no special work needed — `Transformer` base class
+handles `__copy__`, `__deepcopy__`, `__getstate__`/`__setstate__` automatically.
+Just avoid storing non-picklable objects (open connections, locks) in instance attributes.
 
 ## Validation
 

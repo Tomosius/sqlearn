@@ -137,6 +137,37 @@ def test_standard_scaler_empty_table():
     """Empty input must raise FitError, not crash."""
 ```
 
+### 8. Pickle Roundtrip
+
+```python
+def test_standard_scaler_pickle_roundtrip(standard_dataset):
+    """Pickle → unpickle must preserve params_ and sets_."""
+    import pickle
+
+    pipe = sq.Pipeline([sq.StandardScaler()])
+    pipe.fit(standard_dataset)
+    original = pipe.transform(standard_dataset)
+
+    restored = pickle.loads(pickle.dumps(pipe))
+    np.testing.assert_allclose(original, restored.transform(standard_dataset))
+```
+
+### 9. Deep Clone Independence
+
+```python
+def test_standard_scaler_clone_independence(standard_dataset, alt_dataset):
+    """Cloned pipeline re-fit must not affect original."""
+    pipe = sq.Pipeline([sq.StandardScaler()])
+    pipe.fit(standard_dataset)
+    original_result = pipe.transform(standard_dataset)
+
+    cloned = pipe.clone()
+    cloned.fit(alt_dataset)  # re-fit with different data
+
+    # Original must be unchanged
+    np.testing.assert_allclose(original_result, pipe.transform(standard_dataset))
+```
+
 ## Property-Based Tests (hypothesis)
 
 Use `hypothesis` for fuzzing. Ensures transformers never crash on any valid input:

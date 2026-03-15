@@ -134,8 +134,15 @@ Recommended split:
 
 ## After Committing
 
-- Update `BACKLOG.md` if a tracked item was completed (mark `[x]`)
-- If milestone item completed, note it
+If the commit completes a tracked backlog item:
+
+1. Mark `[x]` in `BACKLOG.md`
+2. Close the GitHub issue: `gh issue close <N> --comment "<summary>"`
+3. Verify issue is on project board #22; if not, add it and set status to Done
+4. If all milestone items are now done, close the GitHub milestone
+
+These steps keep BACKLOG.md, GitHub Issues, the project board, and milestones in sync.
+See the `backlog` skill for detailed commands.
 
 ## Commit Message Template
 
