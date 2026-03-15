@@ -639,13 +639,18 @@ def _collect_aggregations(
 def _collect_set_queries(
     step_info: StepInfo,
     step_index: int,
+    source: str | exp.Expression,
     set_queries: dict[str, exp.Expression],
 ) -> None:
     """Collect set-valued queries from one dynamic step into a shared dict.
 
+    Adds a FROM clause to any set query that doesn't already have one,
+    since discover_sets() doesn't know the source table.
+
     Args:
         step_info: Compiled info for this step.
         step_index: Position of this step in the layer (for key naming).
+        source: Source table/view name or expression to add as FROM clause.
         set_queries: Accumulator dict keyed by ``"{step_index}_{set_name}"``.
     """
     # Cast to Any: defensive check for user-defined transformers that may
@@ -663,7 +668,16 @@ def _collect_set_queries(
 
     for set_name, set_query in sets_result.items():
         if isinstance(set_query, exp.Expression):
-            set_queries[f"{step_index}_{set_name}"] = set_query
+            # Add FROM source to set queries that don't have one
+            resolved_query = set_query
+            if isinstance(set_query, exp.Select) and not set_query.find(exp.From):
+                source_expr = (
+                    exp.to_table(source)  # pyright: ignore[reportUnknownMemberType]
+                    if isinstance(source, str)
+                    else source
+                )
+                resolved_query = set_query.from_(source_expr)  # pyright: ignore[reportUnknownMemberType]
+            set_queries[f"{step_index}_{set_name}"] = resolved_query
 
 
 def build_fit_queries(
@@ -706,7 +720,7 @@ def build_fit_queries(
 
         # Dynamic step: collect aggregations and set queries
         _collect_aggregations(step_info, i, running_exprs, aggregate_selects, param_mapping)
-        _collect_set_queries(step_info, i, set_queries)
+        _collect_set_queries(step_info, i, source, set_queries)
 
     # Build aggregate query
     aggregate_query: exp.Expression | None = None

@@ -257,8 +257,11 @@ class Pipeline:
             for step_info in layer.steps:
                 step_info.step.columns_ = step_info.columns
                 step_info.step.input_schema_ = step_info.input_schema
-                step_info.step.output_schema_ = step_info.step_output_schema
                 step_info.step._fitted = True  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+                # Re-compute output schema now that params_/sets_ are populated
+                step_info.step.output_schema_ = step_info.step.output_schema(
+                    step_info.input_schema
+                )
 
             # Materialize intermediate layers as temp views
             if i < len(plan.layers) - 1:
@@ -272,10 +275,22 @@ class Pipeline:
                 )
                 resolved_backend.execute(create_ast)
 
-                current_exprs = {col: exp.Column(this=col) for col in layer.output_schema.columns}
+                last_step = layer.steps[-1].step
+                out_schema = (
+                    last_step.output_schema_
+                    if last_step.output_schema_ is not None
+                    else layer.output_schema
+                )
+                current_exprs = {col: exp.Column(this=col) for col in out_schema.columns}
 
         self._fitted = True
-        self._schema_out = plan.layers[-1].output_schema
+        last_layer = plan.layers[-1]
+        last_fitted = last_layer.steps[-1].step
+        self._schema_out = (
+            last_fitted.output_schema_
+            if last_fitted.output_schema_ is not None
+            else last_layer.output_schema
+        )
         return self
 
     def transform(
