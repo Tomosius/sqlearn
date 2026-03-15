@@ -1,6 +1,6 @@
 [project]
 name = "sqlearn"
-version = "0.0.1"
+version = "0.1.0"
 description = "Compile ML preprocessing pipelines to SQL via sqlglot ASTs"
 readme = "README.md"
 license = "MIT"
