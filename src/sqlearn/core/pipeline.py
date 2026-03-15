@@ -332,7 +332,7 @@ class Pipeline:
         for i, layer in enumerate(plan.layers):
             layer_source: str = source if i == 0 else f"__sq_layer_{i - 1}__"
 
-            fit_queries = build_fit_queries(layer, layer_source, current_exprs)
+            fit_queries = build_fit_queries(layer, layer_source, current_exprs, y)
 
             # Execute aggregate query
             if fit_queries.aggregate_query is not None:

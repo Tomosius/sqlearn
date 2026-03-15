@@ -595,12 +595,13 @@ def _substitute_columns(
     return expression
 
 
-def _collect_aggregations(
+def _collect_aggregations(  # noqa: PLR0913
     step_info: StepInfo,
     step_index: int,
     running_exprs: dict[str, exp.Expression],
     aggregate_selects: list[exp.Expression],
     param_mapping: dict[str, tuple[str, str]],
+    y_column: str | None = None,
 ) -> None:
     """Collect scalar aggregations from one dynamic step into shared lists.
 
@@ -613,12 +614,13 @@ def _collect_aggregations(
         running_exprs: Current column expressions (modified in-place by caller).
         aggregate_selects: Accumulator for aliased aggregate expressions.
         param_mapping: Accumulator for alias-to-(step, param) mapping.
+        y_column: Target column name, if any.
     """
     # Cast to Any: defensive check for user-defined transformers that may
     # violate type contracts at runtime.
     try:
         raw_discover: Any = step_info.step.discover(
-            step_info.columns, step_info.input_schema, None
+            step_info.columns, step_info.input_schema, y_column
         )
     except Exception:
         raw_discover = {}
@@ -641,6 +643,7 @@ def _collect_set_queries(
     step_index: int,
     source: str | exp.Expression,
     set_queries: dict[str, exp.Expression],
+    y_column: str | None = None,
 ) -> None:
     """Collect set-valued queries from one dynamic step into a shared dict.
 
@@ -652,12 +655,13 @@ def _collect_set_queries(
         step_index: Position of this step in the layer (for key naming).
         source: Source table/view name or expression to add as FROM clause.
         set_queries: Accumulator dict keyed by ``"{step_index}_{set_name}"``.
+        y_column: Target column name, if any.
     """
     # Cast to Any: defensive check for user-defined transformers that may
     # violate type contracts at runtime.
     try:
         raw_sets: Any = step_info.step.discover_sets(
-            step_info.columns, step_info.input_schema, None
+            step_info.columns, step_info.input_schema, y_column
         )
     except Exception:
         raw_sets = {}
@@ -684,6 +688,7 @@ def build_fit_queries(
     layer: Layer,
     source: str | exp.Expression,
     current_exprs: dict[str, exp.Expression],
+    y_column: str | None = None,
 ) -> FitQueries:
     """Build minimal SQL queries to fit one layer.
 
@@ -698,6 +703,7 @@ def build_fit_queries(
         source: Source table/view name or expression.
         current_exprs: Current column expressions (accumulated from
             prior steps, used for expression inlining).
+        y_column: Target column name, if any.
 
     Returns:
         FitQueries with aggregate query, set queries, and param mapping.
@@ -719,8 +725,10 @@ def build_fit_queries(
             continue
 
         # Dynamic step: collect aggregations and set queries
-        _collect_aggregations(step_info, i, running_exprs, aggregate_selects, param_mapping)
-        _collect_set_queries(step_info, i, source, set_queries)
+        _collect_aggregations(
+            step_info, i, running_exprs, aggregate_selects, param_mapping, y_column
+        )
+        _collect_set_queries(step_info, i, source, set_queries, y_column)
 
     # Build aggregate query
     aggregate_query: exp.Expression | None = None
