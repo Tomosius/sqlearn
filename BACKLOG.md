@@ -46,10 +46,10 @@ These are ready to work on. Ordered by priority.
 - [x] API reference auto-generated from docstrings (all shipped M2 modules)
 
 ### Milestone 3 — Composition + Breadth (v0.2.0)
-- [ ] `Columns` (replaces ColumnTransformer)
-- [ ] `Union` (replaces FeatureUnion)
-- [ ] Auto column routing selectors
-- [ ] `+` operator with flattening
+- [x] `Columns` (replaces ColumnTransformer)
+- [x] `Union` (replaces FeatureUnion)
+- [x] Auto column routing selectors
+- [x] `+` operator with flattening
 - [x] More scalers: MinMax, Robust, MaxAbs, Normalizer
 - [x] More encoders: Ordinal, Hash, Frequency
 - [x] Data operations: Rename, Cast, Filter, Sample, Deduplicate
