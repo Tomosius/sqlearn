@@ -159,6 +159,14 @@ nav:
           - Filter: api/filter.md
           - Sample: api/sample.md
           - Deduplicate: api/deduplicate.md
+      - Feature Engineering:
+          - Arithmetic: api/arithmetic.md
+          - String: api/string.md
+          - Datetime: api/datetime.md
+          - Window: api/window.md
+          - OutlierHandler: api/outlier-handler.md
+          - TargetTransform: api/target-transform.md
+      - Feature Selection: api/feature-selection.md
       - Data Merging:
           - merge: api/merge.md
           - concat: api/concat.md
