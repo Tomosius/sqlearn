@@ -27,3 +27,9 @@ Auto-generated from source code docstrings.
 | [Imputer](imputer.md) | NULL imputation (mean, median, most_frequent, constant) |
 | [StandardScaler](standard-scaler.md) | Zero mean, unit variance scaling |
 | [OneHotEncoder](onehot-encoder.md) | Categorical to binary encoding |
+
+## See Also
+
+- **[Getting Started](../getting-started.md)** -- end-to-end walkthrough with code examples and generated SQL
+- **[Pipeline](pipeline.md)** -- how to compose transformers into a single SQL query
+- **[Custom Transformers](custom.md)** -- three levels for writing your own SQL transforms

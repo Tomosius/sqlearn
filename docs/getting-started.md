@@ -221,4 +221,9 @@ np.testing.assert_allclose(sq_result, sk_result, atol=1e-10)  # passes
 
 ## Next Steps
 
-- [API Reference](api/index.md) — full documentation of all classes and functions
+- **[API Reference](api/index.md)** -- full documentation of all classes and functions
+- **[Pipeline](api/pipeline.md)** -- `Pipeline` class details (fit, transform, to_sql, freeze)
+- **[StandardScaler](api/standard-scaler.md)** -- z-score normalization with formula and parameters
+- **[Imputer](api/imputer.md)** -- NULL imputation strategies (mean, median, most_frequent, constant)
+- **[OneHotEncoder](api/onehot-encoder.md)** -- categorical to binary encoding
+- **[Custom Transformers](api/custom.md)** -- write your own SQL transforms at three levels of complexity

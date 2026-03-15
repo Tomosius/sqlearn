@@ -8,3 +8,8 @@
 *[NaN]: Not a Number — represents missing/undefined numeric values
 *[CSV]: Comma-Separated Values
 *[CI]: Continuous Integration
+*[NULL]: Missing or undefined value in SQL
+*[COALESCE]: SQL function that returns the first non-NULL argument
+*[NULLIF]: SQL function that returns NULL if two arguments are equal
+*[EDA]: Exploratory Data Analysis
+*[CV]: Cross-Validation — model evaluation by splitting data into folds
