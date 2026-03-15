@@ -50,6 +50,21 @@ class TestSchemaConstruction:
         with pytest.raises(AttributeError):
             s.columns = {"city": "VARCHAR"}  # type: ignore[misc]
 
+    def test_reserved_prefix_raises(self) -> None:
+        """Columns with __sq_*__ prefix are rejected."""
+        with pytest.raises(SchemaError, match="reserved sqlearn prefix"):
+            Schema({"__sq_fold__": "INTEGER", "price": "DOUBLE"})
+
+    def test_reserved_prefix_multiple(self) -> None:
+        """Multiple reserved columns are all reported."""
+        with pytest.raises(SchemaError, match="reserved sqlearn prefix"):
+            Schema({"__sq_fold__": "INT", "__sq_idx__": "INT"})
+
+    def test_reserved_prefix_partial_ok(self) -> None:
+        """Columns that don't match both prefix and suffix are fine."""
+        s = Schema({"__sq_not_reserved": "INT", "sq_fold__": "INT"})
+        assert len(s) == 2
+
 
 class TestSchemaDunder:
     """Test Schema dunder methods."""
@@ -104,6 +119,30 @@ class TestSchemaDunder:
         s1 = Schema({"a": "INT"})
         s2 = Schema({"b": "INT"})
         assert s1 != s2
+
+    def test_hash_equal_schemas(self) -> None:
+        """Equal schemas have the same hash."""
+        s1 = Schema({"a": "INT", "b": "VARCHAR"})
+        s2 = Schema({"a": "INT", "b": "VARCHAR"})
+        assert hash(s1) == hash(s2)
+
+    def test_hash_different_schemas(self) -> None:
+        """Different schemas have different hashes (high probability)."""
+        s1 = Schema({"a": "INT"})
+        s2 = Schema({"a": "DOUBLE"})
+        assert hash(s1) != hash(s2)
+
+    def test_hash_usable_as_dict_key(self) -> None:
+        """Schema can be used as a dictionary key."""
+        s = Schema({"a": "INT"})
+        d = {s: "cached_plan"}
+        assert d[Schema({"a": "INT"})] == "cached_plan"
+
+    def test_hash_usable_in_set(self) -> None:
+        """Schema can be added to a set."""
+        s1 = Schema({"a": "INT"})
+        s2 = Schema({"a": "INT"})
+        assert len({s1, s2}) == 1
 
 
 class TestSchemaAdd:

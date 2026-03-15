@@ -128,8 +128,19 @@ class Schema:
     columns: dict[str, str]
 
     def __post_init__(self) -> None:
-        """Defensive copy to prevent external mutation."""
+        """Defensive copy and reserved prefix validation."""
         object.__setattr__(self, "columns", dict(self.columns))
+        reserved = [c for c in self.columns if c.startswith("__sq_") and c.endswith("__")]
+        if reserved:
+            msg = (
+                f"Column(s) {sorted(reserved)} use reserved sqlearn prefix "
+                "'__sq_*__'. Please rename these columns."
+            )
+            raise SchemaError(msg)
+
+    def __hash__(self) -> int:
+        """Hash based on column names and types for cache key use."""
+        return hash(frozenset(self.columns.items()))
 
     # --- Mutation (returns new Schema) ---
 
