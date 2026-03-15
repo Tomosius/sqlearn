@@ -32,6 +32,10 @@ from sqlearn.core.transformer import Transformer
 from sqlearn.custom import Expression, custom
 from sqlearn.encoders.onehot import OneHotEncoder
 from sqlearn.imputers.imputer import Imputer
+from sqlearn.scalers.maxabs import MaxAbsScaler
+from sqlearn.scalers.minmax import MinMaxScaler
+from sqlearn.scalers.normalizer import Normalizer
+from sqlearn.scalers.robust import RobustScaler
 from sqlearn.scalers.standard import StandardScaler
 
 __all__ = [
@@ -45,11 +49,15 @@ __all__ = [
     "FrozenError",
     "Imputer",
     "InvalidStepError",
+    "MaxAbsScaler",
+    "MinMaxScaler",
     "MissingColumnError",
+    "Normalizer",
     "NotFittedError",
     "OneHotEncoder",
     "Pipeline",
     "ProFeatureError",
+    "RobustScaler",
     "SQLearnError",
     "Schema",
     "SchemaError",
