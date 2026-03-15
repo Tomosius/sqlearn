@@ -50,7 +50,7 @@ These are ready to work on. Ordered by priority.
 - [ ] `Union` (replaces FeatureUnion)
 - [ ] Auto column routing selectors
 - [ ] `+` operator with flattening
-- [ ] More scalers: MinMax, Robust, MaxAbs, Normalizer
+- [x] More scalers: MinMax, Robust, MaxAbs, Normalizer
 - [ ] More encoders: Ordinal, Hash, Frequency
 - [ ] Data operations: Rename, Cast, Filter, Sample, Deduplicate
 - [ ] Data merging: merge(), concat(), Lookup
