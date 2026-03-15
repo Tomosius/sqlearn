@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlearn.core.errors import InvalidStepError
+import numpy as np
+import sqlglot.expressions as exp
+
+from sqlearn.core.backend import DuckDBBackend
+from sqlearn.core.compiler import build_fit_queries, compose_transform, plan_fit
+from sqlearn.core.errors import InvalidStepError, NotFittedError
+from sqlearn.core.io import resolve_input
 from sqlearn.core.transformer import Transformer
 
 if TYPE_CHECKING:
-    from sqlearn.core.backend import DuckDBBackend
     from sqlearn.core.schema import Schema
 
 # Steps input type: bare list, tuple list, or dict.
@@ -165,3 +170,209 @@ class Pipeline:
         """
         parts = [f"{name}={type(step).__name__}" for name, step in self._steps]
         return f"Pipeline({', '.join(parts)})"
+
+    # --- Backend resolution ---
+
+    def _resolve_backend(self, backend: str | DuckDBBackend | None = None) -> DuckDBBackend:
+        """Resolve backend with precedence: per-call > pipeline-level > auto-create.
+
+        Args:
+            backend: Per-call backend override.
+
+        Returns:
+            Resolved DuckDBBackend instance.
+        """
+        if backend is not None:
+            if isinstance(backend, DuckDBBackend):
+                return backend
+            return DuckDBBackend(backend)
+        if self._backend_instance is not None:
+            return self._backend_instance
+        if self._backend is not None:
+            if isinstance(self._backend, DuckDBBackend):
+                self._backend_instance = self._backend
+                return self._backend
+            self._backend_instance = DuckDBBackend(self._backend)
+            self._owns_backend = True
+            return self._backend_instance
+        self._backend_instance = DuckDBBackend()
+        self._owns_backend = True
+        return self._backend_instance
+
+    # --- fit / transform / to_sql ---
+
+    def fit(
+        self,
+        data: str | object,
+        y: str | None = None,
+        *,
+        backend: str | DuckDBBackend | None = None,
+    ) -> Pipeline:
+        """Learn parameters from data via three-phase compiler.
+
+        Args:
+            data: Input data (file path, table name, or DataFrame).
+            y: Target column name, or None.
+            backend: Per-call backend override.
+
+        Returns:
+            self (for method chaining).
+        """
+        resolved_backend = self._resolve_backend(backend)
+        source = resolve_input(data, resolved_backend)
+        self._schema_in = resolved_backend.describe(source)
+
+        transformers = [step for _, step in self._steps]
+        plan = plan_fit(transformers, self._schema_in, y)
+
+        current_exprs: dict[str, exp.Expression] = {
+            col: exp.Column(this=col) for col in self._schema_in.columns
+        }
+
+        for i, layer in enumerate(plan.layers):
+            layer_source: str = source if i == 0 else f"__sq_layer_{i - 1}__"
+
+            fit_queries = build_fit_queries(layer, layer_source, current_exprs)
+
+            # Execute aggregate query
+            if fit_queries.aggregate_query is not None:
+                row = resolved_backend.fetch_one(fit_queries.aggregate_query)
+                for alias, (step_idx_str, param_name) in fit_queries.param_mapping.items():
+                    step_idx = int(step_idx_str)
+                    step = layer.steps[step_idx].step
+                    if step.params_ is None:
+                        step.params_ = {}
+                    step.params_[param_name] = row[alias]
+
+            # Execute set queries
+            for key, query in fit_queries.set_queries.items():
+                step_idx_str, set_name = key.split("_", 1)
+                step_idx = int(step_idx_str)
+                step = layer.steps[step_idx].step
+                if step.sets_ is None:
+                    step.sets_ = {}
+                step.sets_[set_name] = resolved_backend.execute(query)
+
+            # Mark steps as fitted
+            for step_info in layer.steps:
+                step_info.step.columns_ = step_info.columns
+                step_info.step.input_schema_ = step_info.input_schema
+                step_info.step.output_schema_ = step_info.step_output_schema
+                step_info.step._fitted = True  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+            # Materialize intermediate layers as temp views
+            if i < len(plan.layers) - 1:
+                layer_transformers = [si.step for si in layer.steps]
+                select_ast = compose_transform(layer_transformers, layer_source)
+                create_ast = exp.Create(
+                    this=exp.to_table(f"__sq_layer_{i}__"),  # pyright: ignore[reportUnknownMemberType]
+                    kind="VIEW",
+                    expression=select_ast,
+                    properties=exp.Properties(expressions=[exp.TemporaryProperty()]),
+                )
+                resolved_backend.execute(create_ast)
+
+                current_exprs = {col: exp.Column(this=col) for col in layer.output_schema.columns}
+
+        self._fitted = True
+        self._schema_out = plan.layers[-1].output_schema
+        return self
+
+    def transform(
+        self,
+        data: str | object,
+        *,
+        backend: str | DuckDBBackend | None = None,
+    ) -> np.ndarray[Any, Any]:
+        """Apply fitted pipeline to data, returning numpy array.
+
+        Args:
+            data: Input data (file path, table name, or DataFrame).
+            backend: Per-call backend override.
+
+        Returns:
+            2D numpy array (float64 if possible, object otherwise).
+
+        Raises:
+            NotFittedError: If fit() has not been called.
+        """
+        if not self._fitted:
+            msg = "Pipeline is not fitted. Call fit() first."
+            raise NotFittedError(msg)
+
+        resolved_backend = self._resolve_backend(backend)
+        source = resolve_input(data, resolved_backend)
+        transformers = [step for _, step in self._steps]
+        select_ast = compose_transform(transformers, source)
+        rows = resolved_backend.execute(select_ast)
+
+        columns = list(rows[0].keys()) if rows else self.get_feature_names_out()
+        if not rows:
+            return np.empty((0, len(columns)), dtype=np.float64)
+
+        data_list = [[row[col] for col in columns] for row in rows]
+        try:
+            return np.array(data_list, dtype=np.float64)
+        except (ValueError, TypeError):
+            return np.array(data_list, dtype=object)
+
+    def fit_transform(
+        self,
+        data: str | object,
+        y: str | None = None,
+        *,
+        backend: str | DuckDBBackend | None = None,
+    ) -> np.ndarray[Any, Any]:
+        """Convenience: fit then transform.
+
+        Args:
+            data: Input data.
+            y: Target column name.
+            backend: Per-call backend override.
+
+        Returns:
+            2D numpy array.
+        """
+        return self.fit(data, y, backend=backend).transform(data, backend=backend)
+
+    def to_sql(
+        self,
+        *,
+        dialect: str = "duckdb",
+        table: str = "__input__",
+    ) -> str:
+        """Compile fitted pipeline to SQL string.
+
+        Args:
+            dialect: SQL dialect for output.
+            table: Source table name in generated SQL.
+
+        Returns:
+            SQL query string.
+
+        Raises:
+            NotFittedError: If fit() has not been called.
+        """
+        if not self._fitted:
+            msg = "Pipeline is not fitted. Call fit() first."
+            raise NotFittedError(msg)
+
+        transformers = [step for _, step in self._steps]
+        query = compose_transform(transformers, table)
+        result: str = query.sql(dialect=dialect)  # pyright: ignore[reportUnknownMemberType]
+        return result
+
+    def get_feature_names_out(self) -> list[str]:
+        """Return output column names after fitting.
+
+        Returns:
+            List of output column names.
+
+        Raises:
+            NotFittedError: If fit() has not been called.
+        """
+        if not self._fitted or self._schema_out is None:
+            msg = "Pipeline is not fitted. Call fit() first."
+            raise NotFittedError(msg)
+
+        return list(self._schema_out.columns.keys())

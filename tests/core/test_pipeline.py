@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 import sqlglot.expressions as exp
 
-from sqlearn.core.errors import InvalidStepError
+from sqlearn.core.backend import DuckDBBackend
+from sqlearn.core.errors import InvalidStepError, NotFittedError
+from sqlearn.core.pipeline import Pipeline
 from sqlearn.core.transformer import Transformer
 
 if TYPE_CHECKING:
@@ -184,3 +187,223 @@ class TestPipelineRepr:
 
         pipe = Pipeline([_StaticStep()])
         assert repr(pipe) == "Pipeline(step_00=_StaticStep)"
+
+
+class TestPipelineFit:
+    """Test Pipeline.fit() workflow."""
+
+    @pytest.fixture
+    def backend(self, tmp_path: Any) -> DuckDBBackend:
+        """Create a DuckDB backend with test data."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute(
+            "CREATE TABLE test_data AS SELECT "
+            "1.0 AS price, 'a' AS city UNION ALL SELECT "
+            "2.0, 'b' UNION ALL SELECT "
+            "3.0, 'a'"
+        )
+        conn.close()
+        return DuckDBBackend(db_path)
+
+    def test_fit_returns_self(self, backend: DuckDBBackend) -> None:
+        """fit() returns self for chaining."""
+        pipe = Pipeline([_StaticStep()])
+        result = pipe.fit("test_data", backend=backend)
+        assert result is pipe
+
+    def test_fit_sets_fitted(self, backend: DuckDBBackend) -> None:
+        """fit() sets is_fitted to True."""
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("test_data", backend=backend)
+        assert pipe.is_fitted is True
+
+    def test_fit_static_only(self, backend: DuckDBBackend) -> None:
+        """fit() with static-only steps marks them fitted."""
+        step = _StaticStep()
+        pipe = Pipeline([step])
+        pipe.fit("test_data", backend=backend)
+        assert step._fitted is True
+        assert step.columns_ is not None
+
+    def test_fit_dynamic_populates_params(self, backend: DuckDBBackend) -> None:
+        """fit() with dynamic step populates params_ from aggregate query."""
+        step = _DynamicStep(columns="numeric")
+        pipe = Pipeline([step])
+        pipe.fit("test_data", backend=backend)
+        assert step.params_ is not None
+        assert step._fitted is True
+
+    def test_fit_auto_creates_backend(self, tmp_path: Any) -> None:
+        """fit() auto-creates in-memory DuckDB when no backend given."""
+        import duckdb
+
+        path = str(tmp_path / "data.parquet")
+        conn = duckdb.connect()
+        conn.execute(f"COPY (SELECT 1.0 AS x, 2.0 AS y) TO '{path}' (FORMAT PARQUET)")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit(path)
+        assert pipe.is_fitted is True
+        assert pipe._owns_backend is True
+
+    def test_fit_stores_schemas(self, backend: DuckDBBackend) -> None:
+        """fit() stores input and output schemas."""
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("test_data", backend=backend)
+        assert pipe._schema_in is not None
+        assert pipe._schema_out is not None
+
+
+class TestPipelineTransform:
+    """Test Pipeline.transform() workflow."""
+
+    @pytest.fixture
+    def fitted_pipe(self, tmp_path: Any) -> tuple[Pipeline, str]:
+        """Create a fitted Pipeline with test data."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute(
+            "CREATE TABLE train AS SELECT "
+            "1.0 AS x, 2.0 AS y UNION ALL SELECT "
+            "3.0, 4.0 UNION ALL SELECT "
+            "5.0, 6.0"
+        )
+        conn.close()
+
+        backend = DuckDBBackend(db_path)
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("train", backend=backend)
+        return pipe, db_path
+
+    def test_transform_returns_numpy(self, fitted_pipe: tuple[Pipeline, str]) -> None:
+        """transform() returns numpy array."""
+        pipe, db_path = fitted_pipe
+        result = pipe.transform("train", backend=DuckDBBackend(db_path))
+        assert isinstance(result, np.ndarray)
+
+    def test_transform_shape(self, fitted_pipe: tuple[Pipeline, str]) -> None:
+        """transform() returns correct shape."""
+        pipe, db_path = fitted_pipe
+        result = pipe.transform("train", backend=DuckDBBackend(db_path))
+        assert result.shape == (3, 2)
+
+    def test_transform_before_fit_raises(self) -> None:
+        """transform() before fit() raises NotFittedError."""
+        pipe = Pipeline([_StaticStep()])
+        with pytest.raises(NotFittedError):
+            pipe.transform("some_table")
+
+    def test_transform_float64_dtype(self, fitted_pipe: tuple[Pipeline, str]) -> None:
+        """transform() returns float64 by default."""
+        pipe, db_path = fitted_pipe
+        result = pipe.transform("train", backend=DuckDBBackend(db_path))
+        assert result.dtype == np.float64
+
+
+class TestPipelineFitTransform:
+    """Test Pipeline.fit_transform()."""
+
+    def test_fit_transform_equivalent(self, tmp_path: Any) -> None:
+        """fit_transform() equals fit().transform()."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y UNION ALL SELECT 3.0, 4.0")
+        conn.close()
+
+        backend1 = DuckDBBackend(db_path)
+        pipe1 = Pipeline([_StaticStep()])
+        result1 = pipe1.fit_transform("data", backend=backend1)
+
+        backend2 = DuckDBBackend(db_path)
+        pipe2 = Pipeline([_StaticStep()])
+        pipe2.fit("data", backend=backend2)
+        result2 = pipe2.transform("data", backend=backend2)
+
+        np.testing.assert_array_equal(result1, result2)
+
+
+class TestPipelineToSql:
+    """Test Pipeline.to_sql()."""
+
+    def test_to_sql_before_fit_raises(self) -> None:
+        """to_sql() before fit() raises NotFittedError."""
+        pipe = Pipeline([_StaticStep()])
+        with pytest.raises(NotFittedError):
+            pipe.to_sql()
+
+    def test_to_sql_returns_string(self, tmp_path: Any) -> None:
+        """to_sql() returns SQL string."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("data", backend=DuckDBBackend(db_path))
+        sql = pipe.to_sql()
+        assert isinstance(sql, str)
+        assert "SELECT" in sql
+
+    def test_to_sql_custom_dialect(self, tmp_path: Any) -> None:
+        """to_sql() respects dialect parameter."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("data", backend=DuckDBBackend(db_path))
+        sql = pipe.to_sql(dialect="postgres")
+        assert isinstance(sql, str)
+
+    def test_to_sql_custom_table(self, tmp_path: Any) -> None:
+        """to_sql() respects table parameter."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("data", backend=DuckDBBackend(db_path))
+        sql = pipe.to_sql(table="my_table")
+        assert "my_table" in sql
+
+
+class TestPipelineGetFeatureNamesOut:
+    """Test Pipeline.get_feature_names_out()."""
+
+    def test_before_fit_raises(self) -> None:
+        """get_feature_names_out() before fit() raises NotFittedError."""
+        pipe = Pipeline([_StaticStep()])
+        with pytest.raises(NotFittedError):
+            pipe.get_feature_names_out()
+
+    def test_returns_column_names(self, tmp_path: Any) -> None:
+        """get_feature_names_out() returns output column names."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x, 2.0 AS y")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit("data", backend=DuckDBBackend(db_path))
+        names = pipe.get_feature_names_out()
+        assert isinstance(names, list)
+        assert "x" in names
+        assert "y" in names
