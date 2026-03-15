@@ -115,6 +115,18 @@ extra_javascript:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Guide:
+      - guide/index.md
+      - Core Concepts: guide/concepts.md
+      - How the Compiler Works: guide/compiler.md
+      - Column Routing: guide/column-routing.md
+      - Custom Transformers: guide/custom-transformers.md
+      - Design Decisions: guide/design-decisions.md
+  - Tutorials:
+      - tutorials/index.md
+      - Your First Pipeline: tutorials/basic-pipeline.md
+      - Custom Transformers: tutorials/custom-transformers.md
+      - sqlearn vs sklearn: tutorials/sklearn-comparison.md
   - API Reference:
       - api/index.md
       - Core:
@@ -147,3 +159,7 @@ nav:
           - Filter: api/filter.md
           - Sample: api/sample.md
           - Deduplicate: api/deduplicate.md
+      - Data Merging:
+          - merge: api/merge.md
+          - concat: api/concat.md
+          - Lookup: api/lookup.md
