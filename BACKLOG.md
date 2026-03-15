@@ -51,7 +51,7 @@ These are ready to work on. Ordered by priority.
 - [ ] Auto column routing selectors
 - [ ] `+` operator with flattening
 - [x] More scalers: MinMax, Robust, MaxAbs, Normalizer
-- [ ] More encoders: Ordinal, Hash, Frequency
+- [x] More encoders: Ordinal, Hash, Frequency
 - [ ] Data operations: Rename, Cast, Filter, Sample, Deduplicate
 - [ ] Data merging: merge(), concat(), Lookup
 - [ ] User guide: conceptual explanations, how the compiler works and why
