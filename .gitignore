@@ -38,6 +38,9 @@ Thumbs.db
 
 # uv — lockfile committed for reproducible CI
 
+# Docs
+site/
+
 # DuckDB
 *.duckdb
 *.duckdb.wal

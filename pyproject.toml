@@ -42,6 +42,10 @@ studio = [
     "plotly>=5.15",
     "nbformat>=5.9",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
+]
 all = ["sqlearn[pandas,polars,arrow,sparse,plot,optuna,yaml]"]
 
 [project.urls]

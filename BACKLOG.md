@@ -42,8 +42,8 @@ These are ready to work on. Ordered by priority.
 - [x] Custom transformer validation tests (type checking, schema, params)
 - [x] Integration tests: pipeline output matches sklearn (`np.allclose`)
 - [x] SQL snapshot tests
-- [ ] Documentation site infrastructure (mkdocs + mkdocstrings)
-- [ ] API reference auto-generated from docstrings (all shipped M2 modules)
+- [x] Documentation site infrastructure (mkdocs + mkdocstrings)
+- [x] API reference auto-generated from docstrings (all shipped M2 modules)
 
 ### Milestone 3 — Composition + Breadth (v0.2.0)
 - [ ] `Columns` (replaces ColumnTransformer)

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help install lint format format-check typecheck interrogate vulture \
-        test cov test-full mutant check ci prerelease clean
+        test cov test-full mutant check ci prerelease clean docs docs-serve
 
 ## ─── Setup ───────────────────────────────────────────────────────────────────
 
@@ -61,12 +61,20 @@ prerelease: ## Test across Python 3.10-3.14
 	done
 	@echo "\n\033[32m✓ All Python versions passed\033[0m"
 
+## ─── Documentation ──────────────────────────────────────────────────────────
+
+docs: ## Build documentation site
+	uv run mkdocs build
+
+docs-serve: ## Serve documentation locally (with live reload)
+	uv run mkdocs serve
+
 ## ─── Cleanup ─────────────────────────────────────────────────────────────────
 
 clean: ## Remove build artifacts and caches
 	rm -rf dist/ build/ *.egg-info/
 	rm -rf .pytest_cache/ .mypy_cache/ .pyright/ .ruff_cache/
 	rm -rf htmlcov/ .coverage coverage.xml
-	rm -rf .mutmut-cache/
+	rm -rf .mutmut-cache/ site/
 	rm -rf .venv-3.1*
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
