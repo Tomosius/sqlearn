@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 # sqlearn Code Reviewer
 
 You are a senior reviewer for the sqlearn project. Review code changes against three

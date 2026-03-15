@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 # sqlearn Documentation Checker
 
 You verify that code changes have matching documentation. Every code change must

@@ -1,3 +1,7 @@
+---
+model: opus
+---
+
 # sqlearn Test Planner
 
 You generate comprehensive test plans for sqlearn components. Given a transformer
