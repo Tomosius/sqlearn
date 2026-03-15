@@ -137,3 +137,9 @@ nav:
           - OrdinalEncoder: api/ordinal-encoder.md
           - HashEncoder: api/hash-encoder.md
           - FrequencyEncoder: api/frequency-encoder.md
+      - Data Operations:
+          - Rename: api/rename.md
+          - Cast: api/cast.md
+          - Filter: api/filter.md
+          - Sample: api/sample.md
+          - Deduplicate: api/deduplicate.md
