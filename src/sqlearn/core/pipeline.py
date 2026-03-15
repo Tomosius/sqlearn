@@ -51,6 +51,35 @@ def _auto_name(
     return f"step_{idx:0{width}d}"
 
 
+def _merge_steps(
+    left: list[tuple[str, Transformer]],
+    right: list[tuple[str, Transformer]],
+) -> list[tuple[str, Transformer]]:
+    """Merge two step lists, renaming auto-named steps on collision.
+
+    When combining pipelines, auto-generated names (``step_NN``) may
+    collide. This function detects collisions and renumbers the
+    right-hand steps using ``_auto_name`` to pick the next available
+    index. User-given names are never renamed -- collisions on
+    user-given names will be caught by ``_normalize_steps``.
+
+    Args:
+        left: Steps from the left operand (kept as-is).
+        right: Steps from the right operand (may be renamed).
+
+    Returns:
+        Combined list of (name, transformer) tuples.
+    """
+    result = list(left)
+    left_names = {n for n, _ in left}
+    for name, step in right:
+        effective_name = name
+        if name in left_names and name.startswith("step_") and name[5:].isdigit():
+            effective_name = _auto_name(result, step)
+        result.append((effective_name, step))
+    return result
+
+
 def _normalize_steps(steps: _StepsInput) -> list[tuple[str, Transformer]]:
     """Normalize all input formats to list of (name, transformer) tuples.
 
@@ -255,6 +284,20 @@ class Pipeline:
 
     # --- fit / transform / to_sql ---
 
+    @staticmethod
+    def _finalize_step(step_info: Any) -> None:  # noqa: ANN401
+        """Mark a step fitted and run composition post-fit hooks."""
+        step_info.step.columns_ = step_info.columns
+        step_info.step.input_schema_ = step_info.input_schema
+        step_info.step._fitted = True  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        # Re-compute output schema now that params_/sets_ are populated
+        step_info.step.output_schema_ = step_info.step.output_schema(step_info.input_schema)
+        # Union/Columns: distribute params to branches and mark fitted
+        if hasattr(step_info.step, "_distribute_fitted_params"):
+            step_info.step._distribute_fitted_params()  # noqa: SLF001
+        if hasattr(step_info.step, "_mark_branches_fitted"):
+            step_info.step._mark_branches_fitted(step_info.input_schema)  # noqa: SLF001
+
     def fit(
         self,
         data: str | object,
@@ -309,13 +352,7 @@ class Pipeline:
 
             # Mark steps as fitted
             for step_info in layer.steps:
-                step_info.step.columns_ = step_info.columns
-                step_info.step.input_schema_ = step_info.input_schema
-                step_info.step._fitted = True  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-                # Re-compute output schema now that params_/sets_ are populated
-                step_info.step.output_schema_ = step_info.step.output_schema(
-                    step_info.input_schema
-                )
+                self._finalize_step(step_info)
 
             # Materialize intermediate layers as temp views
             if i < len(plan.layers) - 1:
@@ -449,49 +486,59 @@ class Pipeline:
     # --- Operators ---
 
     def __add__(self, other: object) -> Pipeline:
-        """Compose pipelines: Pipeline + Transformer or Pipeline + Pipeline.
+        """Compose pipelines: ``Pipeline + Transformer`` or ``Pipeline + Pipeline``.
+
+        Returns a **new** Pipeline with flattened steps. Clones all steps
+        so the result is independent of both operands.
+
+        Args:
+            other: Transformer or Pipeline to append.
+
+        Returns:
+            New Pipeline with combined, cloned steps.
+
+        Raises:
+            InvalidStepError: If step name collision detected.
+        """
+        if isinstance(other, Pipeline):
+            left = [(n, s.clone()) for n, s in self._steps]
+            right = [(n, s.clone()) for n, s in other._steps]
+            return Pipeline(_merge_steps(left, right))
+        if isinstance(other, Transformer):
+            name = _auto_name(self._steps, other)
+            left = [(n, s.clone()) for n, s in self._steps]
+            return Pipeline([*left, (name, other.clone())])
+        return NotImplemented
+
+    def __radd__(self, other: object) -> Pipeline:
+        """Handle ``Transformer + Pipeline``.
+
+        Called when a bare Transformer is on the left side of ``+``.
+        Clones all steps for independence.
+
+        Args:
+            other: Transformer to prepend.
+
+        Returns:
+            New Pipeline with other prepended before existing steps.
+        """
+        if isinstance(other, Transformer):
+            name = _auto_name(self._steps, other)
+            right = [(n, s.clone()) for n, s in self._steps]
+            return Pipeline([(name, other.clone()), *right])
+        return NotImplemented
+
+    def __iadd__(self, other: object) -> Pipeline:
+        """Non-mutating ``+=``. Returns new Pipeline.
+
+        Follows Python numeric convention: ``a += b`` rebinds ``a``
+        to a new Pipeline rather than mutating the original.
 
         Args:
             other: Transformer or Pipeline to append.
 
         Returns:
             New Pipeline with combined steps.
-
-        Raises:
-            InvalidStepError: If step name collision detected.
-        """
-        if isinstance(other, Pipeline):
-            combined = [*self._steps, *other._steps]
-            return Pipeline(combined)
-        if isinstance(other, Transformer):
-            name = _auto_name(self._steps, other)
-            combined = [*self._steps, (name, other)]
-            return Pipeline(combined)
-        return NotImplemented
-
-    def __radd__(self, other: object) -> Pipeline:
-        """Handle Transformer + Pipeline.
-
-        Args:
-            other: Transformer to prepend.
-
-        Returns:
-            New Pipeline with other prepended.
-        """
-        if isinstance(other, Transformer):
-            name = _auto_name(self._steps, other)
-            combined = [(name, other), *self._steps]
-            return Pipeline(combined)
-        return NotImplemented
-
-    def __iadd__(self, other: object) -> Pipeline:
-        """Non-mutating +=. Returns new Pipeline.
-
-        Args:
-            other: Transformer or Pipeline to append.
-
-        Returns:
-            New Pipeline.
         """
         return self.__add__(other)
 
