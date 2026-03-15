@@ -471,3 +471,253 @@ class TestPipelineFix:
         assert "city_london" in names
         assert "city_paris" in names
         assert "city" not in names
+
+
+# ── Not-fitted guard tests ───────────────────────────────────────
+
+
+class TestNotFittedGuard:
+    """Calling transform/to_sql before fit() raises NotFittedError."""
+
+    def test_transform_before_fit_raises(self) -> None:
+        """transform() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([OneHotEncoder()])
+        with pytest.raises(NotFittedError):
+            pipe.transform("t")
+
+    def test_to_sql_before_fit_raises(self) -> None:
+        """to_sql() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([OneHotEncoder()])
+        with pytest.raises(NotFittedError):
+            pipe.to_sql()
+
+
+# ── Clone and pickle tests ──────────────────────────────────────
+
+
+class TestCloneAndPickle:
+    """Deep clone independence and pickle roundtrip."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create a fitted pipeline for clone/pickle tests."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'London'), (2.0, 'Paris'), (3.0, 'Tokyo') t(price, city)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_clone_produces_same_sql(self, fitted_pipe: Pipeline) -> None:
+        """Cloned pipeline produces identical SQL."""
+        cloned = fitted_pipe.clone()
+        assert fitted_pipe.to_sql() == cloned.to_sql()
+
+    def test_clone_sets_independent(self, fitted_pipe: Pipeline) -> None:
+        """Modifying cloned step sets does not affect original."""
+        cloned = fitted_pipe.clone()
+        original_enc = fitted_pipe.steps[0][1]
+        cloned_enc = cloned.steps[0][1]
+        assert cloned_enc.sets_ is not None
+        cloned_enc.sets_["city__categories"] = []
+        assert original_enc.sets_ is not None
+        assert len(original_enc.sets_["city__categories"]) == 3
+
+    def test_pickle_roundtrip(self) -> None:
+        """Pickle an individual encoder preserves sets."""
+        import pickle
+
+        enc = OneHotEncoder()
+        enc.sets_ = {"city__categories": [{"city": "London"}, {"city": "Paris"}]}
+        enc._fitted = True
+        enc.columns_ = ["city"]
+        enc.input_schema_ = Schema({"price": "DOUBLE", "city": "VARCHAR"})
+        enc.output_schema_ = enc.output_schema(enc.input_schema_)
+        data = pickle.dumps(enc)
+        restored = pickle.loads(data)  # noqa: S301
+        assert restored.sets_ == enc.sets_
+        assert restored._fitted is True
+
+
+# ── Edge cases ──────────────────────────────────────────────────
+
+
+class TestEdgeCases:
+    """Extreme and unusual inputs."""
+
+    def test_single_category(self) -> None:
+        """Column with one unique category produces one binary column."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES ('A'), ('A'), ('A') t(cat)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (3, 1)
+        # All rows should be 1
+        np.testing.assert_array_equal(result.flatten(), [1, 1, 1])
+
+    def test_many_categories(self) -> None:
+        """Column with many unique categories."""
+        conn = duckdb.connect()
+        values = ", ".join([f"('{chr(65 + i)}')" for i in range(26)])
+        conn.execute(f"CREATE TABLE t AS SELECT * FROM VALUES {values} t(letter)")  # noqa: S608
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder(max_categories=10)], backend=backend)
+        result = pipe.fit_transform("t")
+        # 26 rows x 10 categories (truncated)
+        assert result.shape == (26, 10)
+
+    def test_categories_with_spaces(self) -> None:
+        """Categories containing spaces produce valid column names."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES ('New York'), ('Los Angeles'), ('New York') t(city)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        pipe.fit("t")
+        names = pipe.get_feature_names_out()
+        assert "city_new_york" in names
+        assert "city_los_angeles" in names
+
+    def test_categories_with_mixed_case(self) -> None:
+        """Mixed case categories normalized in column names."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM VALUES ('RED'), ('Blue'), ('GREEN') t(color)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        pipe.fit("t")
+        names = pipe.get_feature_names_out()
+        assert "color_red" in names
+        assert "color_blue" in names
+        assert "color_green" in names
+
+    def test_null_only_category_column(self) -> None:
+        """Column with all NULLs produces no binary columns."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, CAST(NULL AS VARCHAR)), "
+            "(2.0, CAST(NULL AS VARCHAR)) t(price, cat)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # Only price remains (cat had no non-null categories)
+        assert result.shape == (2, 1)
+
+    def test_numeric_passthrough(self) -> None:
+        """Numeric columns are not encoded (pass through unchanged)."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 100, 'A'), (2.0, 200, 'B') t(price, qty, color)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # price, qty pass through + color_a, color_b = 4 columns
+        assert result.shape == (2, 4)
+        # price and qty should be unchanged
+        np.testing.assert_allclose(result[:, 0].astype(float), [1.0, 2.0])
+        np.testing.assert_allclose(result[:, 1].astype(float), [100.0, 200.0])
+
+
+# ── SQL snapshot tests ──────────────────────────────────────────
+
+
+class TestSqlSnapshot:
+    """Verify SQL output structure and patterns."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create fitted pipeline for SQL verification."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'London'), (2.0, 'Paris'), (3.0, 'Tokyo') t(price, city)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([OneHotEncoder()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_sql_has_case_when_per_category(self, fitted_pipe: Pipeline) -> None:
+        """Each category gets a CASE WHEN in the SQL."""
+        sql = fitted_pipe.to_sql().upper()
+        assert sql.count("CASE") == 3  # London, Paris, Tokyo
+
+    def test_sql_has_select_from(self, fitted_pipe: Pipeline) -> None:
+        """SQL contains SELECT and FROM."""
+        sql = fitted_pipe.to_sql().upper()
+        assert "SELECT" in sql
+        assert "FROM" in sql
+
+    def test_sql_no_original_column(self, fitted_pipe: Pipeline) -> None:
+        """Original 'city' column is not in SELECT (only binary cols)."""
+        sql = fitted_pipe.to_sql()
+        # Should have city_london, city_paris, city_tokyo but NOT bare city AS city
+        assert "city_london" in sql.lower()
+        assert "city_paris" in sql.lower()
+
+    def test_sql_custom_table(self, fitted_pipe: Pipeline) -> None:
+        """to_sql(table=...) uses custom table name."""
+        sql = fitted_pipe.to_sql(table="raw_data")
+        assert "raw_data" in sql
+
+
+# ── Composition tests ───────────────────────────────────────────
+
+
+class TestComposition:
+    """OneHotEncoder composing with other transformers."""
+
+    def test_imputer_then_encoder(self) -> None:
+        """Imputer + OneHotEncoder: NULLs filled before encoding."""
+        from sqlearn.imputers.imputer import Imputer
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES ('A'), ('B'), (NULL), ('A') t(cat)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (4, 2)
+
+    def test_full_pipeline(self) -> None:
+        """Imputer + StandardScaler + OneHotEncoder: full pipeline."""
+        from sqlearn.imputers.imputer import Imputer
+        from sqlearn.scalers.standard import StandardScaler
+
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'A'), (NULL, 'B'), (3.0, NULL), (4.0, 'A') t(num, cat)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), StandardScaler(), OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # num (scaled) + cat_a + cat_b = 3 columns
+        assert result.shape == (4, 3)
+
+    def test_encoder_sql_composes_with_imputer(self) -> None:
+        """SQL shows COALESCE nested inside CASE WHEN from composition."""
+        from sqlearn.imputers.imputer import Imputer
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES ('A'), ('B'), (NULL) t(cat)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), OneHotEncoder()], backend=backend)
+        pipe.fit("t")
+        sql = pipe.to_sql().upper()
+        assert "COALESCE" in sql
+        assert "CASE" in sql

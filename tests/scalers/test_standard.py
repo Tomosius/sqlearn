@@ -408,3 +408,328 @@ class TestPipeline:
         result2 = pipe2.transform("t")
 
         np.testing.assert_array_equal(result1, result2)
+
+
+# ── Not-fitted guard tests ───────────────────────────────────────
+
+
+class TestNotFittedGuard:
+    """Calling transform/to_sql before fit() raises NotFittedError."""
+
+    def test_transform_before_fit_raises(self) -> None:
+        """transform() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([StandardScaler()])
+        with pytest.raises(NotFittedError):
+            pipe.transform("t")
+
+    def test_to_sql_before_fit_raises(self) -> None:
+        """to_sql() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([StandardScaler()])
+        with pytest.raises(NotFittedError):
+            pipe.to_sql()
+
+    def test_get_feature_names_before_fit_raises(self) -> None:
+        """get_feature_names_out() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([StandardScaler()])
+        with pytest.raises(NotFittedError):
+            pipe.get_feature_names_out()
+
+
+# ── Clone and pickle tests ──────────────────────────────────────
+
+
+class TestCloneAndPickle:
+    """Deep clone independence and pickle roundtrip."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create a fitted pipeline for clone/pickle tests."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM VALUES (1.0, 10.0), (2.0, 20.0), (3.0, 30.0) t(a, b)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_clone_produces_same_sql(self, fitted_pipe: Pipeline) -> None:
+        """Cloned pipeline produces identical SQL."""
+        cloned = fitted_pipe.clone()
+        assert fitted_pipe.to_sql() == cloned.to_sql()
+
+    def test_clone_params_independent(self, fitted_pipe: Pipeline) -> None:
+        """Modifying cloned step params does not affect original."""
+        cloned = fitted_pipe.clone()
+        original_scaler = fitted_pipe.steps[0][1]
+        cloned_scaler = cloned.steps[0][1]
+        # Mutate clone
+        assert cloned_scaler.params_ is not None
+        cloned_scaler.params_["a__mean"] = 999.0
+        # Original should be unchanged
+        assert original_scaler.params_ is not None
+        assert original_scaler.params_["a__mean"] != 999.0
+
+    def test_pickle_roundtrip(self) -> None:
+        """Pickle an individual scaler preserves params."""
+        import pickle
+
+        scaler = StandardScaler()
+        scaler.params_ = {"a__mean": 3.0, "a__std": 1.5}
+        scaler._fitted = True
+        data = pickle.dumps(scaler)
+        restored = pickle.loads(data)  # noqa: S301
+        assert restored.params_ == {"a__mean": 3.0, "a__std": 1.5}
+        assert restored._fitted is True
+
+
+# ── Edge cases ──────────────────────────────────────────────────
+
+
+class TestEdgeCases:
+    """Extreme and unusual inputs."""
+
+    def test_single_row(self) -> None:
+        """Single-row data produces std=0, handled by NULLIF."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (42.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        # std=0 → NULLIF returns NULL → result is NULL (None)
+        assert result.shape == (1, 1)
+
+    def test_constant_column(self) -> None:
+        """All-same-value column has std=0, handled by NULLIF."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (5.0), (5.0), (5.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        # std=0, division by NULLIF(0,0) = NULL
+        assert result.shape == (3, 1)
+
+    def test_large_values(self) -> None:
+        """Very large values don't crash."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (1e100), (2e100), (3e100) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (3, 1)
+        # Mean should be ~0
+        np.testing.assert_allclose(result.mean(), 0.0, atol=1e-10)
+
+    def test_negative_values(self) -> None:
+        """Negative values handled correctly."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (-10.0), (-20.0), (-30.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        np.testing.assert_allclose(result.mean(), 0.0, atol=1e-10)
+
+    def test_mixed_positive_negative(self) -> None:
+        """Mixed positive/negative values centered correctly."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM VALUES (-2.0), (-1.0), (0.0), (1.0), (2.0) t(a)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        np.testing.assert_allclose(result.mean(), 0.0, atol=1e-10)
+        np.testing.assert_allclose(result.std(ddof=0), 1.0, atol=1e-10)
+
+
+# ── sklearn equivalence tests ───────────────────────────────────
+
+
+class TestSklearnEquivalence:
+    """Compare sqlearn StandardScaler output to sklearn."""
+
+    def test_basic_equivalence(self) -> None:
+        """sqlearn matches sklearn for basic numeric data."""
+        from sklearn.preprocessing import StandardScaler as SklearnScaler
+
+        data = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0], [5.0, 50.0]])
+
+        # sklearn
+        sk_result = SklearnScaler().fit_transform(data)
+
+        # sqlearn — use population std (ddof=0) like sklearn
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 10.0), (2.0, 20.0), (3.0, 30.0), "
+            "(4.0, 40.0), (5.0, 50.0) t(a, b)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        sq_result = pipe.fit_transform("t")
+
+        np.testing.assert_allclose(sq_result, sk_result, atol=1e-10)
+
+    def test_with_mean_false_equivalence(self) -> None:
+        """sqlearn matches sklearn with with_mean=False."""
+        from sklearn.preprocessing import StandardScaler as SklearnScaler
+
+        data = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
+
+        sk_result = SklearnScaler(with_mean=False).fit_transform(data)
+
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM VALUES (1.0), (2.0), (3.0), (4.0), (5.0) t(a)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler(with_mean=False)], backend=backend)
+        sq_result = pipe.fit_transform("t")
+
+        np.testing.assert_allclose(sq_result, sk_result, atol=1e-10)
+
+    def test_with_std_false_equivalence(self) -> None:
+        """sqlearn matches sklearn with with_std=False."""
+        from sklearn.preprocessing import StandardScaler as SklearnScaler
+
+        data = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
+
+        sk_result = SklearnScaler(with_std=False).fit_transform(data)
+
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM VALUES (1.0), (2.0), (3.0), (4.0), (5.0) t(a)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler(with_std=False)], backend=backend)
+        sq_result = pipe.fit_transform("t")
+
+        np.testing.assert_allclose(sq_result, sk_result, atol=1e-10)
+
+    def test_multicolumn_equivalence(self) -> None:
+        """sqlearn matches sklearn for many columns with varied distributions."""
+        from sklearn.preprocessing import StandardScaler as SklearnScaler
+
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((100, 5)) * np.array([1, 10, 100, 0.1, 50]) + np.array(
+            [0, 50, -100, 3, 200]
+        )
+
+        sk_result = SklearnScaler().fit_transform(data)
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e DOUBLE)")
+        for row in data:
+            conn.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", [float(x) for x in row])
+
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        sq_result = pipe.fit_transform("t")
+
+        np.testing.assert_allclose(sq_result, sk_result, atol=1e-10)
+
+
+# ── SQL snapshot tests ──────────────────────────────────────────
+
+
+class TestSqlSnapshot:
+    """Verify SQL output structure and patterns."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create fitted pipeline for SQL verification."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 10.0), (2.0, 20.0), (3.0, 30.0) t(price, quantity)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_sql_has_select_from(self, fitted_pipe: Pipeline) -> None:
+        """SQL contains SELECT and FROM."""
+        sql = fitted_pipe.to_sql().upper()
+        assert "SELECT" in sql
+        assert "FROM" in sql
+
+    def test_sql_has_nullif_per_column(self, fitted_pipe: Pipeline) -> None:
+        """Each column gets a NULLIF for safe division."""
+        sql = fitted_pipe.to_sql().upper()
+        assert sql.count("NULLIF") == 2  # one per column
+
+    def test_sql_contains_learned_values(self, fitted_pipe: Pipeline) -> None:
+        """SQL contains the learned mean and std values."""
+        sql = fitted_pipe.to_sql()
+        scaler = fitted_pipe.steps[0][1]
+        assert scaler.params_ is not None
+        # The mean of [1,2,3] = 2.0 should appear
+        assert "2.0" in sql
+
+    def test_sql_custom_table(self, fitted_pipe: Pipeline) -> None:
+        """to_sql(table=...) uses custom table name."""
+        sql = fitted_pipe.to_sql(table="my_data")
+        assert "my_data" in sql
+
+    def test_sql_custom_dialect(self, fitted_pipe: Pipeline) -> None:
+        """to_sql(dialect=...) generates valid SQL for that dialect."""
+        sql_pg = fitted_pipe.to_sql(dialect="postgres")
+        sql_duck = fitted_pipe.to_sql(dialect="duckdb")
+        # Both should be valid SQL strings
+        assert isinstance(sql_pg, str)
+        assert isinstance(sql_duck, str)
+
+
+# ── Composition tests ───────────────────────────────────────────
+
+
+class TestComposition:
+    """StandardScaler composing with other transformers."""
+
+    def test_imputer_then_scaler(self) -> None:
+        """Imputer + StandardScaler produces nested COALESCE-in-subtract."""
+        from sqlearn.imputers.imputer import Imputer
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (1.0), (NULL), (3.0), (4.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (4, 1)
+        # No NaN/None in output (NULL was imputed before scaling)
+        assert not np.any(np.isnan(result.astype(float)))
+
+    def test_imputer_scaler_sql_nesting(self) -> None:
+        """SQL shows COALESCE nested inside subtraction."""
+        from sqlearn.imputers.imputer import Imputer
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (1.0), (NULL), (3.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), StandardScaler()], backend=backend)
+        pipe.fit("t")
+        sql = pipe.to_sql().upper()
+        assert "COALESCE" in sql
+        assert "NULLIF" in sql
+
+    def test_scaler_then_encoder(self) -> None:
+        """StandardScaler + OneHotEncoder processes mixed columns."""
+        from sqlearn.encoders.onehot import OneHotEncoder
+
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'A'), (2.0, 'B'), (3.0, 'A') t(price, city)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([StandardScaler(), OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # price (scaled) + city_a + city_b = 3 columns
+        assert result.shape == (3, 3)

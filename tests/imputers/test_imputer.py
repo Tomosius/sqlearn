@@ -526,3 +526,220 @@ class TestPipeline:
         np.testing.assert_allclose(float(result[1, 0]), -1.0, atol=1e-10)
         # Row 2 cat (was NULL) -> "MISSING"
         assert result[2, 1] == "MISSING"
+
+
+# ── Not-fitted guard tests ───────────────────────────────────────
+
+
+class TestNotFittedGuard:
+    """Calling transform/to_sql before fit() raises NotFittedError."""
+
+    def test_transform_before_fit_raises(self) -> None:
+        """transform() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([Imputer()])
+        with pytest.raises(NotFittedError):
+            pipe.transform("t")
+
+    def test_to_sql_before_fit_raises(self) -> None:
+        """to_sql() on unfitted pipeline raises NotFittedError."""
+        from sqlearn.core.errors import NotFittedError
+
+        pipe = Pipeline([Imputer()])
+        with pytest.raises(NotFittedError):
+            pipe.to_sql()
+
+
+# ── Clone and pickle tests ──────────────────────────────────────
+
+
+class TestCloneAndPickle:
+    """Deep clone independence and pickle roundtrip."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create a fitted pipeline for clone/pickle tests."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'a'), (NULL, 'b'), (3.0, NULL) t(num, cat)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_clone_produces_same_sql(self, fitted_pipe: Pipeline) -> None:
+        """Cloned pipeline produces identical SQL."""
+        cloned = fitted_pipe.clone()
+        assert fitted_pipe.to_sql() == cloned.to_sql()
+
+    def test_clone_params_independent(self, fitted_pipe: Pipeline) -> None:
+        """Modifying cloned step params does not affect original."""
+        cloned = fitted_pipe.clone()
+        original_imp = fitted_pipe.steps[0][1]
+        cloned_imp = cloned.steps[0][1]
+        assert cloned_imp.params_ is not None
+        cloned_imp.params_["num__value"] = 999.0
+        assert original_imp.params_ is not None
+        assert original_imp.params_["num__value"] != 999.0
+
+    def test_pickle_roundtrip(self) -> None:
+        """Pickle an individual imputer preserves params."""
+        import pickle
+
+        imp = Imputer(strategy="mean")
+        imp.params_ = {"num__value": 42.5}
+        imp._fitted = True
+        data = pickle.dumps(imp)
+        restored = pickle.loads(data)  # noqa: S301
+        assert restored.params_ == {"num__value": 42.5}
+        assert restored._fitted is True
+
+
+# ── Edge cases ──────────────────────────────────────────────────
+
+
+class TestEdgeCases:
+    """Extreme and unusual inputs."""
+
+    def test_mostly_nulls_column(self) -> None:
+        """Column with mostly NULLs — fill value from single non-null."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (CAST(NULL AS DOUBLE)), (42.0), (CAST(NULL AS DOUBLE)) t(a)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(strategy="mean")], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (3, 1)
+        # All values should be 42.0 (nulls filled with mean of [42.0] = 42.0)
+        np.testing.assert_allclose(result.flatten(), [42.0, 42.0, 42.0], atol=1e-10)
+
+    def test_no_nulls_passthrough(self) -> None:
+        """Data with no NULLs passes through unchanged."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (1.0), (2.0), (3.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(strategy="mean")], backend=backend)
+        result = pipe.fit_transform("t")
+        np.testing.assert_array_equal(result.flatten(), [1.0, 2.0, 3.0])
+
+    def test_two_rows_one_null(self) -> None:
+        """Two rows, one NULL — fill with mean of single non-null."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (10.0), (CAST(NULL AS DOUBLE)) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(strategy="mean")], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (2, 1)
+        np.testing.assert_allclose(result.flatten(), [10.0, 10.0], atol=1e-10)
+
+    def test_single_row_no_null(self) -> None:
+        """Single row without NULL passes through."""
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (42.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(strategy="mean")], backend=backend)
+        result = pipe.fit_transform("t")
+        np.testing.assert_allclose(result[0, 0], 42.0, atol=1e-10)
+
+    def test_many_columns(self) -> None:
+        """10 columns with mixed NULLs all imputed."""
+        conn = duckdb.connect()
+        cols = ", ".join([f"c{i} DOUBLE" for i in range(10)])
+        conn.execute(f"CREATE TABLE t ({cols})")
+        for i in range(5):
+            vals = ", ".join(
+                [str(float(i + j)) if (i + j) % 3 != 0 else "NULL" for j in range(10)]
+            )
+            conn.execute(f"INSERT INTO t VALUES ({vals})")  # noqa: S608
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(strategy="mean")], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (5, 10)
+
+
+# ── SQL snapshot tests ──────────────────────────────────────────
+
+
+class TestSqlSnapshot:
+    """Verify SQL output structure and patterns."""
+
+    @pytest.fixture
+    def fitted_pipe(self) -> Pipeline:
+        """Create fitted pipeline for SQL verification."""
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'a'), (NULL, 'b'), (3.0, NULL) t(price, city)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer()], backend=backend)
+        pipe.fit("t")
+        return pipe
+
+    def test_sql_has_coalesce_per_column(self, fitted_pipe: Pipeline) -> None:
+        """Each column gets a COALESCE in the SQL."""
+        sql = fitted_pipe.to_sql().upper()
+        assert sql.count("COALESCE") == 2  # one per column
+
+    def test_sql_has_select_from(self, fitted_pipe: Pipeline) -> None:
+        """SQL contains SELECT and FROM."""
+        sql = fitted_pipe.to_sql().upper()
+        assert "SELECT" in sql
+        assert "FROM" in sql
+
+    def test_sql_custom_table(self, fitted_pipe: Pipeline) -> None:
+        """to_sql(table=...) uses custom table name."""
+        sql = fitted_pipe.to_sql(table="raw_data")
+        assert "raw_data" in sql
+
+
+# ── Composition tests ───────────────────────────────────────────
+
+
+class TestComposition:
+    """Imputer composing with other transformers."""
+
+    def test_imputer_then_scaler(self) -> None:
+        """Imputer + StandardScaler: COALESCE nested in subtraction."""
+        from sqlearn.scalers.standard import StandardScaler
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES (1.0), (NULL), (3.0), (4.0) t(a)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), StandardScaler()], backend=backend)
+        result = pipe.fit_transform("t")
+        assert result.shape == (4, 1)
+        assert not np.any(np.isnan(result.astype(float)))
+
+    def test_imputer_then_encoder(self) -> None:
+        """Imputer + OneHotEncoder: NULLs filled before encoding."""
+        from sqlearn.encoders.onehot import OneHotEncoder
+
+        conn = duckdb.connect()
+        conn.execute("CREATE TABLE t AS SELECT * FROM VALUES ('A'), ('B'), (NULL), ('A') t(cat)")
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # 4 rows, 2 categories (A, B) -> 2 binary columns
+        assert result.shape == (4, 2)
+
+    def test_three_step_pipeline(self) -> None:
+        """Imputer + StandardScaler + OneHotEncoder: full pipeline."""
+        from sqlearn.encoders.onehot import OneHotEncoder
+        from sqlearn.scalers.standard import StandardScaler
+
+        conn = duckdb.connect()
+        conn.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "VALUES (1.0, 'A'), (NULL, 'B'), (3.0, NULL), (4.0, 'A') t(num, cat)"
+        )
+        backend = DuckDBBackend(connection=conn)
+        pipe = Pipeline([Imputer(), StandardScaler(), OneHotEncoder()], backend=backend)
+        result = pipe.fit_transform("t")
+        # num (scaled) + cat_a + cat_b = 3 columns
+        assert result.shape == (4, 3)
