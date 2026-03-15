@@ -34,6 +34,9 @@ from sqlearn.core.schema import (
 from sqlearn.core.transformer import Transformer
 from sqlearn.core.union import Union
 from sqlearn.custom import Expression, custom
+from sqlearn.data.concat import concat, concat_query
+from sqlearn.data.lookup import Lookup
+from sqlearn.data.merge import merge, merge_query
 from sqlearn.encoders.frequency import FrequencyEncoder
 from sqlearn.encoders.hash import HashEncoder
 from sqlearn.encoders.onehot import OneHotEncoder
@@ -67,6 +70,7 @@ __all__ = [
     "HashEncoder",
     "Imputer",
     "InvalidStepError",
+    "Lookup",
     "MaxAbsScaler",
     "MinMaxScaler",
     "MissingColumnError",
@@ -92,9 +96,13 @@ __all__ = [
     "categorical",
     "columns",
     "compose_transform",
+    "concat",
+    "concat_query",
     "custom",
     "dtype",
     "matching",
+    "merge",
+    "merge_query",
     "numeric",
     "resolve_input",
     "temporal",
