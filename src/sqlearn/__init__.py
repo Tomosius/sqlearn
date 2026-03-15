@@ -29,6 +29,8 @@ from sqlearn.core.schema import (
     temporal,
 )
 from sqlearn.core.transformer import Transformer
+from sqlearn.encoders.onehot import OneHotEncoder
+from sqlearn.imputers.imputer import Imputer
 from sqlearn.scalers.standard import StandardScaler
 
 __all__ = [
@@ -39,9 +41,11 @@ __all__ = [
     "DuckDBBackend",
     "FitError",
     "FrozenError",
+    "Imputer",
     "InvalidStepError",
     "MissingColumnError",
     "NotFittedError",
+    "OneHotEncoder",
     "Pipeline",
     "ProFeatureError",
     "SQLearnError",

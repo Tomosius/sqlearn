@@ -34,9 +34,9 @@ These are ready to work on. Ordered by priority.
 - [x] `errors.py` — error hierarchy (incl. `ClassificationError`, `ProFeatureError`)
 - [x] `compiler.py` — expression composition, CTE promotion
 - [x] `pipeline.py` — Pipeline: fit, transform, fit_transform, to_sql
-- [ ] `Imputer` — proves aggregation discovery, COALESCE composition
-- [ ] `StandardScaler` — proves arithmetic composition
-- [ ] `OneHotEncoder` — proves layer boundaries, CASE generation
+- [x] `Imputer` — proves aggregation discovery, COALESCE composition
+- [x] `StandardScaler` — proves arithmetic composition
+- [x] `OneHotEncoder` — proves layer boundaries, CASE generation
 - [ ] `sq.Expression()` — static one-liner custom transform
 - [ ] `sq.custom()` — template-based custom transform (static + dynamic)
 - [ ] Custom transformer validation tests (type checking, schema, params)
