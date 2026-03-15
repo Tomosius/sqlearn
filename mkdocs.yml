@@ -83,6 +83,11 @@ markdown_extensions:
 plugins:
   - search
   - section-index
+  - exclude:
+      glob:
+        - "0[0-9]-*.md"
+        - "1[0-6]-*.md"
+        - "superpowers/**"
   - mkdocstrings:
       default_handler: python
       handlers:

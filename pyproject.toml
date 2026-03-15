@@ -48,6 +48,7 @@ docs = [
     "mkdocs-section-index>=0.3",
     "pillow>=10.0",
     "cairosvg>=2.7",
+    "mkdocs-exclude>=1.0.2",
 ]
 all = ["sqlearn[pandas,polars,arrow,sparse,plot,optuna,yaml]"]
 
