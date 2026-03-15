@@ -407,3 +407,170 @@ class TestPipelineGetFeatureNamesOut:
         assert isinstance(names, list)
         assert "x" in names
         assert "y" in names
+
+
+class TestPipelineOperators:
+    """Test Pipeline + and += operators."""
+
+    def test_pipeline_plus_transformer(self) -> None:
+        """Pipeline + Transformer appends step."""
+        pipe = Pipeline([("a", _StaticStep())])
+        new = pipe + _DynamicStep()
+        assert len(new.steps) == 2
+        assert new.steps[0][0] == "a"
+        assert new.steps[1][0].startswith("step_")
+
+    def test_pipeline_plus_pipeline(self) -> None:
+        """Pipeline + Pipeline flattens steps."""
+        pipe1 = Pipeline([("a", _StaticStep())])
+        pipe2 = Pipeline([("b", _DynamicStep())])
+        combined = pipe1 + pipe2
+        assert len(combined.steps) == 2
+        assert combined.steps[0][0] == "a"
+        assert combined.steps[1][0] == "b"
+
+    def test_pipeline_plus_name_collision_raises(self) -> None:
+        """Pipeline + Pipeline with name collision raises."""
+        pipe1 = Pipeline([("same", _StaticStep())])
+        pipe2 = Pipeline([("same", _DynamicStep())])
+        with pytest.raises(InvalidStepError, match="Duplicate step name"):
+            pipe1 + pipe2
+
+    def test_pipeline_plus_non_transformer(self) -> None:
+        """Pipeline + non-Transformer returns NotImplemented."""
+        pipe = Pipeline([_StaticStep()])
+        result = pipe.__add__(42)  # type: ignore[arg-type]
+        assert result is NotImplemented
+
+    def test_iadd_returns_new_pipeline(self) -> None:
+        """Pipeline += returns NEW Pipeline, non-mutating."""
+        pipe = Pipeline([("a", _StaticStep())])
+        original_id = id(pipe)
+        pipe += _DynamicStep()  # type: ignore[assignment]
+        assert id(pipe) != original_id
+        assert len(pipe.steps) == 2
+
+    def test_radd_transformer_plus_pipeline(self) -> None:
+        """Transformer + Pipeline via __radd__."""
+        pipe = Pipeline([("b", _DynamicStep())])
+        step = _StaticStep()
+        combined = step + pipe  # type: ignore[operator]
+        assert len(combined.steps) == 2
+        assert combined.steps[1][0] == "b"
+
+
+class TestTransformerOperators:
+    """Test Transformer.__add__ and __iadd__ creating Pipelines."""
+
+    def test_transformer_plus_transformer(self) -> None:
+        """Transformer + Transformer creates Pipeline."""
+        s1, s2 = _StaticStep(), _DynamicStep()
+        result = s1 + s2
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 2
+
+    def test_transformer_plus_pipeline(self) -> None:
+        """Transformer + Pipeline prepends."""
+        pipe = Pipeline([("b", _DynamicStep())])
+        step = _StaticStep()
+        result = step + pipe
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 2
+        assert result.steps[1][0] == "b"
+
+    def test_transformer_iadd(self) -> None:
+        """Transformer += creates Pipeline."""
+        s1 = _StaticStep()
+        result = s1.__iadd__(_DynamicStep())
+        assert isinstance(result, Pipeline)
+
+
+class TestPipelineClone:
+    """Test Pipeline.clone()."""
+
+    def test_clone_independent_copy(self) -> None:
+        """clone() creates independent copy."""
+        pipe = Pipeline([("a", _StaticStep()), ("b", _DynamicStep())])
+        cloned = pipe.clone()
+        assert cloned is not pipe
+        assert len(cloned.steps) == len(pipe.steps)
+
+    def test_clone_preserves_names(self) -> None:
+        """clone() preserves step names."""
+        pipe = Pipeline([("scale", _StaticStep())])
+        cloned = pipe.clone()
+        assert cloned.steps[0][0] == "scale"
+
+    def test_clone_independent_steps(self) -> None:
+        """clone() steps are independent objects."""
+        step = _StaticStep()
+        pipe = Pipeline([("a", step)])
+        cloned = pipe.clone()
+        assert cloned.steps[0][1] is not step
+
+    def test_clone_no_backend(self) -> None:
+        """clone() does not copy backend."""
+        pipe = Pipeline([_StaticStep()], backend="test.duckdb")
+        cloned = pipe.clone()
+        assert cloned._backend is None
+        assert cloned._owns_backend is False
+
+    def test_clone_preserves_fitted_state(self, tmp_path: Any) -> None:
+        """clone() preserves is_fitted when original is fitted."""
+        import duckdb
+
+        path = str(tmp_path / "data.parquet")
+        conn = duckdb.connect()
+        conn.execute(f"COPY (SELECT 1.0 AS x, 2.0 AS y) TO '{path}' (FORMAT PARQUET)")
+        conn.close()
+
+        pipe = Pipeline([_StaticStep()])
+        pipe.fit(path)
+        cloned = pipe.clone()
+        assert cloned.is_fitted is True
+        assert cloned.get_feature_names_out() == pipe.get_feature_names_out()
+
+
+class TestPipelineContextManager:
+    """Test Pipeline context manager."""
+
+    def test_context_manager_returns_self(self) -> None:
+        """__enter__ returns Pipeline."""
+        pipe = Pipeline([_StaticStep()])
+        with pipe as p:
+            assert p is pipe
+
+    def test_context_manager_closes_owned_backend(self, tmp_path: Any) -> None:
+        """__exit__ closes auto-created (owned) backend."""
+        import duckdb
+
+        path = str(tmp_path / "data.parquet")
+        conn = duckdb.connect()
+        conn.execute(f"COPY (SELECT 1.0 AS x) TO '{path}' (FORMAT PARQUET)")
+        conn.close()
+
+        with Pipeline([_StaticStep()]) as pipe:
+            pipe.fit(path)
+            assert pipe._owns_backend is True
+        assert pipe._backend_instance is not None
+        assert pipe._backend_instance._connection is None
+
+    def test_context_manager_does_not_close_user_backend(self, tmp_path: Any) -> None:
+        """__exit__ does NOT close user-provided backend."""
+        import duckdb
+
+        db_path = str(tmp_path / "test.duckdb")
+        conn = duckdb.connect(db_path)
+        conn.execute("CREATE TABLE data AS SELECT 1.0 AS x")
+        conn.close()
+
+        user_backend = DuckDBBackend(db_path)
+        with Pipeline([_StaticStep()]) as pipe:
+            pipe.fit("data", backend=user_backend)
+            assert pipe._owns_backend is False
+        assert user_backend._connection is not None
+
+    def test_context_manager_no_backend_no_error(self) -> None:
+        """__exit__ works even if no backend was created."""
+        with Pipeline([_StaticStep()]):
+            pass

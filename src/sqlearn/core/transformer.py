@@ -455,25 +455,31 @@ class Transformer:
 
     # --- Operators ---
 
-    def __add__(self, other: Transformer) -> Transformer:
+    def __add__(self, other: object) -> Any:
         """Sequential composition: a + b -> Pipeline([a, b]).
 
         Returns a new Pipeline containing both transformers.
         Flattens nested Pipeline operands.
 
         Args:
-            other: Transformer to compose after self.
+            other: Transformer or Pipeline to compose after self.
 
         Returns:
-            A new Pipeline (once Pipeline is implemented).
-
-        Raises:
-            NotImplementedError: Until Pipeline (issue #7) is implemented.
+            A new Pipeline, or NotImplemented if type is unsupported.
         """
-        msg = "Pipeline composition requires sqlearn.core.pipeline (issue #7)"
-        raise NotImplementedError(msg)
+        from sqlearn.core.pipeline import (
+            Pipeline,
+            _auto_name,  # pyright: ignore[reportPrivateUsage]
+        )
 
-    def __iadd__(self, other: Transformer) -> Transformer:
+        if isinstance(other, Pipeline):
+            name = _auto_name(other.steps, self)
+            return Pipeline([(name, self), *other.steps])
+        if isinstance(other, Transformer):
+            return Pipeline([self, other])
+        return NotImplemented
+
+    def __iadd__(self, other: object) -> Any:
         """Incremental composition: pipe += step -> NEW Pipeline.
 
         Non-mutating — follows Python numeric convention.
@@ -483,10 +489,7 @@ class Transformer:
             other: Transformer to append.
 
         Returns:
-            A new Pipeline (once Pipeline is implemented).
-
-        Raises:
-            NotImplementedError: Until Pipeline (issue #7) is implemented.
+            A new Pipeline.
         """
         return self.__add__(other)
 

@@ -17,6 +17,7 @@ from sqlearn.core.errors import (
     UnseenCategoryError,
 )
 from sqlearn.core.io import resolve_input
+from sqlearn.core.pipeline import Pipeline
 from sqlearn.core.schema import (
     ColumnSelector,
     Schema,
@@ -40,6 +41,7 @@ __all__ = [
     "InvalidStepError",
     "MissingColumnError",
     "NotFittedError",
+    "Pipeline",
     "ProFeatureError",
     "SQLearnError",
     "Schema",

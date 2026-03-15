@@ -645,17 +645,23 @@ class TestApplyExpressions:
 class TestOperators:
     """Test __add__ and __iadd__ pipeline composition."""
 
-    def test_add_raises_not_implemented(self) -> None:
-        a = _StaticTransformer()
-        b = _DynamicTransformer()
-        with pytest.raises(NotImplementedError, match="Pipeline"):
-            _ = a + b
+    def test_add_creates_pipeline(self) -> None:
+        from sqlearn.core.pipeline import Pipeline
 
-    def test_iadd_raises_not_implemented(self) -> None:
         a = _StaticTransformer()
         b = _DynamicTransformer()
-        with pytest.raises(NotImplementedError, match="Pipeline"):
-            a += b
+        result = a + b
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 2
+
+    def test_iadd_creates_pipeline(self) -> None:
+        from sqlearn.core.pipeline import Pipeline
+
+        a = _StaticTransformer()
+        b = _DynamicTransformer()
+        result = a.__iadd__(b)
+        assert isinstance(result, Pipeline)
+        assert len(result.steps) == 2
 
 
 class TestStubs:

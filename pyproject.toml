@@ -120,6 +120,7 @@ convention = "google"
     "SLF001",   # clone() accesses private attrs on new instance of same type
     "ANN401",   # stubs use Any until Pipeline/Backend/IO land
     "PLR0913",  # transform() has many params matching sklearn convention
+    "PLC0415",  # __add__ uses local import to break circular dependency with pipeline
 ]
 "tests/**/*.py" = [
     "S101",    # assert is fine in tests

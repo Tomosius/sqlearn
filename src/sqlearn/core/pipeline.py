@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _StepsInput = list[Transformer] | list[tuple[str, Transformer]] | dict[str, Transformer]
 
 
-def _auto_name(  # pyright: ignore[reportUnusedFunction]  # used by operators (Task 6)
+def _auto_name(
     existing: list[tuple[str, Transformer]],
     step: Transformer,  # noqa: ARG001
 ) -> str:
@@ -376,3 +376,89 @@ class Pipeline:
             raise NotFittedError(msg)
 
         return list(self._schema_out.columns.keys())
+
+    # --- Operators ---
+
+    def __add__(self, other: object) -> Pipeline:
+        """Compose pipelines: Pipeline + Transformer or Pipeline + Pipeline.
+
+        Args:
+            other: Transformer or Pipeline to append.
+
+        Returns:
+            New Pipeline with combined steps.
+
+        Raises:
+            InvalidStepError: If step name collision detected.
+        """
+        if isinstance(other, Pipeline):
+            combined = [*self._steps, *other._steps]
+            return Pipeline(combined)
+        if isinstance(other, Transformer):
+            name = _auto_name(self._steps, other)
+            combined = [*self._steps, (name, other)]
+            return Pipeline(combined)
+        return NotImplemented
+
+    def __radd__(self, other: object) -> Pipeline:
+        """Handle Transformer + Pipeline.
+
+        Args:
+            other: Transformer to prepend.
+
+        Returns:
+            New Pipeline with other prepended.
+        """
+        if isinstance(other, Transformer):
+            name = _auto_name(self._steps, other)
+            combined = [(name, other), *self._steps]
+            return Pipeline(combined)
+        return NotImplemented
+
+    def __iadd__(self, other: object) -> Pipeline:
+        """Non-mutating +=. Returns new Pipeline.
+
+        Args:
+            other: Transformer or Pipeline to append.
+
+        Returns:
+            New Pipeline.
+        """
+        return self.__add__(other)
+
+    # --- Clone ---
+
+    def clone(self) -> Pipeline:
+        """Create independent copy of pipeline.
+
+        Clones each step via step.clone(). Preserves step names and
+        fitted state. Does NOT copy backend (lazy reconnect).
+
+        Returns:
+            New Pipeline with cloned steps.
+        """
+        cloned_steps = [(name, step.clone()) for name, step in self._steps]
+        new_pipe = Pipeline(cloned_steps)
+        new_pipe._fitted = self._fitted
+        new_pipe._schema_in = self._schema_in
+        new_pipe._schema_out = self._schema_out
+        return new_pipe
+
+    # --- Context Manager ---
+
+    def __enter__(self) -> Pipeline:
+        """Enter context manager.
+
+        Returns:
+            This pipeline instance.
+        """
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Exit context manager, closing owned backend.
+
+        Only closes the backend if Pipeline created it. User-provided
+        backends are never closed.
+        """
+        if self._owns_backend and isinstance(self._backend_instance, DuckDBBackend):
+            self._backend_instance.close()
