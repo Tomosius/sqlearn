@@ -40,8 +40,8 @@ These are ready to work on. Ordered by priority.
 - [ ] `sq.Expression()` — static one-liner custom transform
 - [ ] `sq.custom()` — template-based custom transform (static + dynamic)
 - [ ] Custom transformer validation tests (type checking, schema, params)
-- [ ] Integration tests: pipeline output matches sklearn (`np.allclose`)
-- [ ] SQL snapshot tests
+- [x] Integration tests: pipeline output matches sklearn (`np.allclose`)
+- [x] SQL snapshot tests
 - [ ] Documentation site infrastructure (mkdocs + mkdocstrings)
 - [ ] API reference auto-generated from docstrings (all shipped M2 modules)
 
