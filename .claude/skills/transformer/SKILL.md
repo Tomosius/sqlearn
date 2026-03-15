@@ -129,7 +129,7 @@ Other examples: `StringSplit(max_parts=3)` → static, `StringSplit(max_parts="a
 def output_schema(self, schema):
     # REQUIRED when expressions() adds new column names
     return schema.add({f"{col}_flag": "INTEGER" for col in self.columns_})
-    # Or for dropping: return schema.remove(["col_to_drop"])
+    # Or for dropping: return schema.drop(["col_to_drop"])
 ```
 
 **Set-learning transformer (encoders):**
@@ -143,10 +143,10 @@ class OneHotEncoder(Transformer):
 
     def discover_sets(self, columns, schema, y_column=None):
         # Return {name: sqlglot_query} — each query returns a list of values
+        # Note: DO NOT add .from_() — the compiler adds FROM automatically
         return {f"{col}__categories": exp.Select(
             expressions=[exp.Distinct(expressions=[exp.Column(this=col)])]
-        ).from_(exp.Table(this="__source__"))
-        for col in columns}
+        ) for col in columns}
 
     def expressions(self, columns, exprs):
         # self.sets_ has {name: list_of_dicts} from discover_sets()
@@ -201,9 +201,25 @@ Create `tests/<folder>/test_my_transformer.py` with ALL of:
 - [ ] Classification test (`_classification` matches `discover()` reality)
 - [ ] Roundtrip test (fit → to_sql → execute → same result)
 - [ ] Clone test (independent copy, identical output)
-- [ ] Edge cases (single row, constant column, empty table)
+- [ ] Edge cases (single row, constant column, empty table, all NULLs, large values)
+- [ ] Composition test (works correctly after Imputer/other prior steps)
+- [ ] Cross-library validation (compare with sklearn/scipy equivalent)
+- [ ] Pickle roundtrip test
+- [ ] Not-fitted guard test
 
-See `/test` skill for full test patterns and the 3-tier testing strategy.
+See `/test` skill for full test patterns, cross-library validation matrix,
+pipeline stress tests, and the 3-tier testing strategy.
+
+### 5. Write documentation
+
+- [ ] Google-style docstring with Args, Returns, Raises, Examples (min 2)
+- [ ] API reference page: `docs/api/<name>.md` with mkdocstrings directive
+- [ ] Add to `nav:` in `mkdocs.yml`
+- [ ] Show generated SQL in Python/SQL tabs
+- [ ] Note sklearn differences if applicable
+- [ ] Cross-link to related transformers
+
+See `/docs` skill for documentation standards and examples.
 
 ## Key Rules
 

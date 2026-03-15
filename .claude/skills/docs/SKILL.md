@@ -231,6 +231,87 @@ Define abbreviations that show hover tooltips across all pages:
 
 Include in mkdocs.yml via `pymdownx.snippets` with `auto_append`.
 
+## Documentation Accompanies Every Change
+
+**Every code change MUST include matching documentation updates.** No exceptions.
+
+This applies to:
+- New transformer → API reference page + docstrings + test examples
+- New parameter → docstring update + user guide mention if user-facing
+- Bug fix → if it changes behavior, update docs to reflect correct behavior
+- New module → `__init__.py` docstring + API page + nav entry in mkdocs.yml
+- Schema change → update architecture docs if it affects public API
+
+### Checklist for New Transformer Documentation
+
+1. **Docstring** — Google style with Args, Returns, Raises, Examples (at least 2)
+2. **API reference page** — `docs/api/<name>.md` with mkdocstrings directive
+3. **mkdocs.yml nav entry** — under correct section
+4. **Cross-links** — link to related transformers, user guide sections
+5. **SQL output example** — show generated SQL in Python/SQL tabs
+6. **sklearn comparison note** — if there's a sklearn equivalent, note differences
+7. **Edge case notes** — document behavior with NULLs, constants, empty data
+
+### Example: Minimal Transformer Documentation
+
+```python
+class RobustScaler(Transformer):
+    """Scale features using statistics robust to outliers.
+
+    Centers to the median and scales by the interquartile range (IQR),
+    making it robust to outliers that would skew mean/std scaling.
+
+    The SQL equivalent:
+
+    ```sql
+    SELECT (price - 50.0) / NULLIF(25.0, 0) AS price
+    FROM data
+    ```
+
+    Args:
+        with_centering: If True, center data before scaling. Default True.
+        with_scaling: If True, scale data to IQR. Default True.
+        quantile_range: Tuple (q_min, q_max) defining the IQR. Default (25.0, 75.0).
+        columns: Columns to transform. Default: all numeric.
+
+    Returns:
+        Scaled array with median=0 and IQR=1 for each feature.
+
+    Raises:
+        FitError: If no numeric columns found or data is empty.
+        NotFittedError: If transform() called before fit().
+
+    Examples:
+        Basic usage:
+
+        >>> pipe = sq.Pipeline([sq.RobustScaler()])
+        >>> pipe.fit("train.parquet")
+        >>> result = pipe.transform("test.parquet")
+
+        Custom quantile range:
+
+        >>> pipe = sq.Pipeline([sq.RobustScaler(quantile_range=(10.0, 90.0))])
+
+    See Also:
+        [StandardScaler][sqlearn.scalers.standard.StandardScaler]: Mean/std scaling.
+        [MinMaxScaler][sqlearn.scalers.minmax.MinMaxScaler]: Range scaling.
+
+    Note:
+        Uses population statistics (ddof=0), matching sklearn's default.
+        Division by zero is protected via NULLIF — constant columns produce NULL.
+    """
+```
+
+### Documentation Quality Standard
+
+Model after scikit-learn, pandas, plotly:
+- **Every public function** has a complete docstring with examples
+- **Every parameter** is documented with type, default, and what it does
+- **Every example** is runnable (not pseudocode)
+- **Cross-references** link to related classes and user guide sections
+- **Generated SQL** is shown alongside Python code
+- **Edge cases** are documented (what happens with NULLs, empty data, etc.)
+
 ## What NOT to Document
 
 - Internal/private methods (single underscore prefix)

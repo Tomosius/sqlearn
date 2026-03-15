@@ -269,6 +269,292 @@ def test_imputer_scaler_ast():
 Use `tests/integration/snapshots/` directory for snapshot files. Compare generated SQL
 against stored snapshots to catch unintended query changes.
 
+## Pipeline Composition Stress Tests
+
+These tests verify the compiler and pipeline handle complex real-world scenarios.
+Every scenario here has caused bugs in similar systems. Test ALL of them.
+
+### 12. Long Pipeline Chains
+
+```python
+@pytest.mark.parametrize("n_steps", [3, 5, 10, 15, 20])
+def test_long_pipeline_chain(n_steps, standard_dataset):
+    """N sequential steps must compose correctly without stack overflow or AST corruption."""
+    steps = [sq.StandardScaler(columns=["price"])] * n_steps
+    pipe = sq.Pipeline(steps)
+    pipe.fit(standard_dataset)
+    result = pipe.transform(standard_dataset)
+    sql = pipe.to_sql()
+    # Must produce valid SQL
+    sqlglot.parse_one(sql, dialect="duckdb")
+    # Must produce finite values
+    assert np.all(np.isfinite(result) | np.isnan(result))
+```
+
+### 13. Mixed Static + Dynamic Pipeline Ordering
+
+The classifier must correctly handle interleaved static and dynamic steps:
+
+```python
+@pytest.mark.parametrize("pipeline_steps", [
+    # All static
+    [sq.Log(), sq.Rename({"price": "cost"})],
+    # All dynamic
+    [sq.Imputer(), sq.StandardScaler()],
+    # Static → Dynamic
+    [sq.Log(), sq.StandardScaler()],
+    # Dynamic → Static
+    [sq.StandardScaler(), sq.Log()],
+    # Interleaved: S → D → S → D
+    [sq.Log(), sq.Imputer(), sq.Rename({"price": "cost"}), sq.StandardScaler()],
+    # Dynamic → Dynamic → Dynamic (chain of data-dependent steps)
+    [sq.Imputer(), sq.StandardScaler(), sq.MinMaxScaler()],
+])
+def test_mixed_static_dynamic_ordering(pipeline_steps, standard_dataset):
+    """Pipeline must handle any mix of static/dynamic steps in any order."""
+    pipe = sq.Pipeline(pipeline_steps)
+    pipe.fit(standard_dataset)
+    result = pipe.transform(standard_dataset)
+    assert result.shape[0] == expected_rows
+    sql = pipe.to_sql()
+    sqlglot.parse_one(sql, dialect="duckdb")
+```
+
+### 14. Dependent Dynamic Steps
+
+When step B's expressions() depends on stats computed by step A, composition must be correct:
+
+```python
+def test_dependent_dynamic_chain():
+    """Imputer fills NULLs → StandardScaler uses filled values for mean/std.
+    The SQL must reflect that StandardScaler's input is COALESCE(...), not raw column."""
+    pipe = sq.Pipeline([sq.Imputer(), sq.StandardScaler()])
+    pipe.fit(data_with_nulls)
+    sql = pipe.to_sql()
+    ast = sqlglot.parse_one(sql, dialect="duckdb")
+    # StandardScaler's expression must wrap Imputer's COALESCE
+    # i.e., (COALESCE(price, fill) - mean) / NULLIF(std, 0)
+    # NOT: (price - mean) / NULLIF(std, 0)  ← this is the bug
+    assert "COALESCE" in sql
+
+def test_three_dependent_dynamic_steps():
+    """Imputer → StandardScaler → MinMaxScaler: triple nesting."""
+    pipe = sq.Pipeline([sq.Imputer(), sq.StandardScaler(), sq.MinMaxScaler()])
+    pipe.fit(standard_dataset)
+    sql = pipe.to_sql()
+    # Verify the MinMaxScaler wraps StandardScaler which wraps Imputer
+    ast = sqlglot.parse_one(sql, dialect="duckdb")
+    # The expression tree depth should be at least 3 levels
+
+def test_encoder_after_imputer():
+    """Imputer fills categorical NULLs → OneHotEncoder uses filled values.
+    Categories discovered must include the fill value, not NULL."""
+    pipe = sq.Pipeline([sq.Imputer(strategy="most_frequent"), sq.OneHotEncoder()])
+    pipe.fit(data_with_null_categories)
+    # Verify encoder sees filled values, not NULLs
+```
+
+### 15. Classification Edge Cases
+
+The static/dynamic classification system must handle all these correctly:
+
+```python
+def test_custom_transformer_empty_discover():
+    """Custom transformer with discover() returning empty dict.
+    Should be classified as static even if discover() exists."""
+
+def test_custom_transformer_classification_mismatch():
+    """Custom transformer claiming static but implementing discover().
+    Validation must catch this on first fit()."""
+    class BadTransformer(sq.Transformer):
+        _classification = "static"
+        def discover(self, columns, schema, y_column=None):
+            return {"mean": exp.Avg(this=exp.Column(this="price"))}
+        def expressions(self, columns, exprs):
+            return {}
+    pipe = sq.Pipeline([BadTransformer()])
+    with pytest.raises(sq.ValidationError):
+        pipe.fit(standard_dataset)
+
+def test_conditional_classification_static_path():
+    """Transformer that is conditionally static (literal args)."""
+    clip = sq.Clip(lower=0, upper=100)
+    assert clip._classification == "static"
+
+def test_conditional_classification_dynamic_path():
+    """Same transformer that is conditionally dynamic (percentile args)."""
+    clip = sq.Clip(lower="p5", upper="p95")
+    assert clip._classification == "dynamic"
+
+def test_both_discover_and_discover_sets():
+    """Transformer implementing both discover() AND discover_sets().
+    Must execute both and populate params_ and sets_."""
+
+def test_pipeline_all_static_no_queries():
+    """Pipeline of only static steps must not run any discovery queries."""
+    pipe = sq.Pipeline([sq.Log(), sq.Rename({"a": "b"})])
+    # fit() should be fast — no SQL queries executed for stats
+
+def test_pipeline_single_dynamic_among_statics():
+    """One dynamic step among 5 static steps.
+    Only the dynamic step's discover() should run."""
+    pipe = sq.Pipeline([sq.Log(), sq.Log(), sq.StandardScaler(), sq.Log(), sq.Log()])
+```
+
+### 16. Custom Transformer Stress Tests
+
+Users will create custom transformers in unexpected ways. Test all combinations:
+
+```python
+def test_custom_sql_expression_static():
+    """sq.Expression('price * qty AS revenue') — static, no learning."""
+    expr = sq.Expression("price * qty AS revenue")
+    pipe = sq.Pipeline([expr])
+    pipe.fit(standard_dataset)
+    assert "revenue" in pipe.get_feature_names_out()
+
+def test_custom_with_discover():
+    """sq.custom() with learn=True — must discover stats and use them."""
+    scaler = sq.custom(
+        "({col} - {mean}) / NULLIF({std}, 0)",
+        columns="numeric",
+        learn={"mean": "AVG({col})", "std": "STDDEV_POP({col})"},
+    )
+    pipe = sq.Pipeline([scaler])
+    pipe.fit(standard_dataset)
+    result = pipe.transform(standard_dataset)
+    # Compare with sklearn StandardScaler
+    sk = sklearn.StandardScaler().fit_transform(load_as_numpy(standard_dataset))
+    np.testing.assert_allclose(result, sk, atol=1e-10)
+
+def test_custom_after_builtin():
+    """Custom transformer after built-in: must receive composed expressions."""
+    pipe = sq.Pipeline([sq.Imputer(), sq.custom("{col} * 2", columns="numeric")])
+    pipe.fit(data_with_nulls)
+    sql = pipe.to_sql()
+    # Custom must multiply COALESCE result, not raw column
+    assert "COALESCE" in sql
+
+def test_custom_between_builtins():
+    """Built-in → custom → built-in: custom must compose in both directions."""
+    pipe = sq.Pipeline([
+        sq.Imputer(),
+        sq.custom("{col} + 1", columns="numeric"),
+        sq.StandardScaler(),
+    ])
+    pipe.fit(data_with_nulls)
+    sql = pipe.to_sql()
+    # StandardScaler must wrap (COALESCE(...) + 1), not just COALESCE(...)
+```
+
+### 17. Schema Propagation Stress Tests
+
+```python
+def test_schema_after_column_add():
+    """Transformer adding columns: downstream steps must see new columns."""
+    pipe = sq.Pipeline([
+        sq.Expression("price * qty AS revenue"),
+        sq.StandardScaler(),  # must auto-detect 'revenue' as numeric
+    ])
+    pipe.fit(standard_dataset)
+    assert "revenue" in pipe.get_feature_names_out()
+
+def test_schema_after_column_drop():
+    """Transformer dropping columns: downstream steps must NOT see dropped columns."""
+    pipe = sq.Pipeline([
+        sq.Drop(columns=["city"]),
+        sq.OneHotEncoder(),  # must not try to encode 'city'
+    ])
+
+def test_schema_column_rename_propagation():
+    """Rename in step 1 → step 2 references new name, not old name."""
+    pipe = sq.Pipeline([
+        sq.Rename({"price": "cost"}),
+        sq.StandardScaler(columns=["cost"]),  # uses new name
+    ])
+    pipe.fit(standard_dataset)
+    result = pipe.transform(standard_dataset)
+    assert "cost" in pipe.get_feature_names_out()
+    assert "price" not in pipe.get_feature_names_out()
+```
+
+## Cross-Library Validation
+
+Compare sqlearn output against established libraries to verify correctness.
+Every sqlearn transformer with a sklearn equivalent MUST have a cross-validation test.
+
+### sklearn Equivalence Matrix
+
+```python
+SKLEARN_EQUIVALENCE = [
+    # (sqlearn_class, sklearn_class, kwargs, tolerance)
+    (sq.StandardScaler, sklearn.StandardScaler, {}, 1e-10),
+    (sq.StandardScaler, sklearn.StandardScaler, {"with_mean": False}, 1e-10),
+    (sq.StandardScaler, sklearn.StandardScaler, {"with_std": False}, 1e-10),
+    (sq.MinMaxScaler, sklearn.MinMaxScaler, {}, 1e-10),
+    (sq.MinMaxScaler, sklearn.MinMaxScaler, {"feature_range": (-1, 1)}, 1e-10),
+    (sq.RobustScaler, sklearn.RobustScaler, {}, 1e-10),
+    (sq.MaxAbsScaler, sklearn.MaxAbsScaler, {}, 1e-10),
+    (sq.Imputer, sklearn.SimpleImputer, {"strategy": "mean"}, 1e-10),
+    (sq.Imputer, sklearn.SimpleImputer, {"strategy": "median"}, 1e-10),
+    (sq.OneHotEncoder, sklearn.OneHotEncoder, {"sparse_output": False}, 0),
+    (sq.OrdinalEncoder, sklearn.OrdinalEncoder, {}, 0),
+]
+
+@pytest.mark.parametrize("sq_cls,sk_cls,kwargs,atol", SKLEARN_EQUIVALENCE)
+def test_sklearn_cross_validation(sq_cls, sk_cls, kwargs, atol, standard_dataset):
+    """Every transformer MUST match sklearn within tolerance."""
+    sq_result = sq_cls(**kwargs).fit_transform(standard_dataset)
+    sk_result = sk_cls(**kwargs).fit_transform(load_as_numpy(standard_dataset))
+    np.testing.assert_allclose(sq_result, sk_result, atol=atol)
+```
+
+### scipy Statistical Validation
+
+For statistical correctness independent of sklearn:
+
+```python
+import scipy.stats
+
+def test_standard_scaler_matches_scipy():
+    """Verify mean/std against scipy.stats, not just sklearn."""
+    pipe = sq.Pipeline([sq.StandardScaler(columns=["price"])])
+    pipe.fit(standard_dataset)
+    scipy_mean = scipy.stats.tmean(raw_prices)
+    scipy_std = np.std(raw_prices, ddof=0)  # population std
+    assert abs(pipe.steps[0].params_["price__mean"] - scipy_mean) < 1e-10
+    assert abs(pipe.steps[0].params_["price__std"] - scipy_std) < 1e-10
+
+def test_robust_scaler_matches_scipy():
+    """Verify median/IQR against scipy.stats."""
+    pipe = sq.Pipeline([sq.RobustScaler(columns=["price"])])
+    pipe.fit(standard_dataset)
+    scipy_median = np.median(raw_prices)
+    scipy_iqr = scipy.stats.iqr(raw_prices)
+    assert abs(pipe.steps[0].params_["price__median"] - scipy_median) < 1e-10
+    assert abs(pipe.steps[0].params_["price__iqr"] - scipy_iqr) < 1e-10
+```
+
+### DuckDB Direct Comparison
+
+Verify sqlearn's SQL produces same results as hand-written DuckDB SQL:
+
+```python
+def test_standard_scaler_matches_duckdb_direct():
+    """sqlearn SQL output must match hand-written equivalent SQL."""
+    pipe = sq.Pipeline([sq.StandardScaler(columns=["price"])])
+    pipe.fit(standard_dataset)
+    sqlearn_result = pipe.transform(standard_dataset)
+
+    hand_sql = """
+    SELECT (price - (SELECT AVG(price) FROM data))
+           / NULLIF((SELECT STDDEV_POP(price) FROM data), 0) AS price
+    FROM data
+    """
+    duckdb_result = duckdb.sql(hand_sql).fetchnumpy()["price"]
+    np.testing.assert_allclose(sqlearn_result[:, 0], duckdb_result, atol=1e-10)
+```
+
 ## Property-Based Tests (hypothesis)
 
 Use `hypothesis` for fuzzing. Ensures transformers never crash on any valid input:
@@ -281,6 +567,18 @@ def test_standard_scaler_never_crashes(values):
     """StandardScaler must handle any valid float list without crashing."""
     # Create table, fit, transform — no exceptions allowed
     ...
+
+@given(st.lists(st.text(min_size=0, max_size=50), min_size=1, max_size=50))
+def test_onehot_encoder_never_crashes(categories):
+    """OneHotEncoder must handle any string list without crashing."""
+    # Including empty strings, unicode, SQL keywords
+
+@given(st.lists(
+    st.one_of(st.floats(allow_nan=True), st.none()),
+    min_size=1, max_size=100,
+))
+def test_imputer_never_crashes(values_with_nulls):
+    """Imputer must handle any mix of floats and NULLs."""
 ```
 
 Key properties to test:
@@ -289,29 +587,106 @@ Key properties to test:
 - Compiled SQL is valid (parse with sqlglot, no errors)
 - Random pipeline of N steps → `to_sql()` produces valid SQL
 
+### Random Pipeline Fuzzing
+
+```python
+ALL_TRANSFORMERS = [sq.Imputer, sq.StandardScaler, sq.MinMaxScaler, sq.Log]
+
+@given(st.lists(
+    st.sampled_from(ALL_TRANSFORMERS), min_size=1, max_size=8,
+))
+def test_random_pipeline_produces_valid_sql(transformer_classes):
+    """Any random combination of transformers must produce parseable SQL."""
+    steps = [cls() for cls in transformer_classes]
+    pipe = sq.Pipeline(steps)
+    pipe.fit(standard_dataset)
+    sql = pipe.to_sql()
+    sqlglot.parse_one(sql, dialect="duckdb")  # must not raise
+
+@given(st.lists(
+    st.sampled_from(ALL_TRANSFORMERS), min_size=2, max_size=5,
+))
+def test_random_pipeline_fit_transform_twice_deterministic(transformer_classes):
+    """Same pipeline fit+transform twice must produce identical output."""
+    steps = [cls() for cls in transformer_classes]
+    pipe = sq.Pipeline(steps)
+    pipe.fit(standard_dataset)
+    r1 = pipe.transform(standard_dataset)
+    r2 = pipe.transform(standard_dataset)
+    np.testing.assert_array_equal(r1, r2)
+```
+
 ## Exhaustive Combinatorial Testing
 
 For classification/planner logic, test all feature combinations:
 
 ```python
-from itertools import combinations
+from itertools import combinations, permutations
 
 ALL_COMBOS = [set(c) for r in range(1, 6) for c in combinations(range(1, 6), r)]
 
 @pytest.mark.parametrize("features", ALL_COMBOS)
 def test_classification_all_combos(features):
     """Every feature combination must classify correctly."""
+
+# Test every permutation of 3 transformer types
+PERM_STEPS = list(permutations([sq.Imputer, sq.StandardScaler, sq.OneHotEncoder], 3))
+
+@pytest.mark.parametrize("step_classes", PERM_STEPS)
+def test_pipeline_permutation_order(step_classes, mixed_dataset):
+    """Every ordering of steps must produce valid SQL (even if semantically odd)."""
+    pipe = sq.Pipeline([cls() for cls in step_classes])
+    pipe.fit(mixed_dataset)
+    sql = pipe.to_sql()
+    sqlglot.parse_one(sql, dialect="duckdb")
 ```
 
-## Mutation Testing (mutmut) — Tier 3
+## Mutation Testing — Tier 3
 
-`make test-full` runs mutmut. Focus on:
-- `compiler.py` — expression composition logic
-- `expressions()` methods — arithmetic operators, CASE expressions
+### mutmut (Primary)
+
+`make test-full` runs mutmut. Focus areas where surviving mutants are most dangerous:
+
+```bash
+# Run against specific high-risk modules
+mutmut run --paths-to-mutate=src/sqlearn/core/compiler.py
+mutmut run --paths-to-mutate=src/sqlearn/core/transformer.py
+mutmut run --paths-to-mutate=src/sqlearn/scalers/
+mutmut run --paths-to-mutate=src/sqlearn/encoders/
+```
+
+**Critical mutation targets:**
+- `compiler.py` — expression composition, CTE promotion, layer resolution
+- `transformer.py` — classification logic, validation, _apply_expressions
+- `expressions()` methods — arithmetic operators, CASE expressions, NULLIF
 - `discover()` methods — aggregate function selection
-- Schema change detection logic
+- `output_schema()` — column add/drop logic
+- Schema propagation between steps
 
-Surviving mutants = tests that didn't catch a real code change. Fix these first.
+**Interpreting results:**
+- Surviving mutant = a code change that tests didn't catch
+- Fix by adding a test that specifically catches that mutation
+- Zero surviving mutants in compiler.py and transformer.py is the goal
+
+### cosmic-ray (Alternative)
+
+For broader mutation coverage when mutmut misses patterns:
+
+```bash
+# Install: pip install cosmic-ray
+cosmic-ray init config.toml src/sqlearn/core/
+cosmic-ray exec config.toml
+cosmic-ray report config.toml
+```
+
+### When to Run Mutation Testing
+
+| Situation | Action |
+|---|---|
+| New transformer added | Run mutmut on the transformer file |
+| Compiler logic changed | Run mutmut on compiler.py — zero survivors required |
+| Before release | Full `make test-full` — report surviving mutants |
+| CI/CD | Tier 3 runs nightly, blocks release if critical mutations survive |
 
 ## Test Fixtures
 

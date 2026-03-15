@@ -154,6 +154,25 @@ All design docs are in `docs/`. Read what you need:
 | `docs/16-performance.md` | Performance strategy, caching, optimization rollout | Compiler optimizations, CV performance work |
 | `BACKLOG.md` | Feature requests, bugs, improvements, ideas | What to work on next |
 
+## Code + Docs + Tests = One Unit
+
+Every code change ships with documentation and tests. No exceptions.
+
+| Change type | Required docs | Required tests |
+|---|---|---|
+| New transformer | Docstring + API page + mkdocs nav entry + SQL example | All 11 mandatory tests + cross-library validation |
+| New parameter | Docstring update | Parameter-specific tests |
+| Bug fix | Update docs if behavior changes | Regression test proving the fix |
+| New module | `__init__.py` docstring + API page | Module-level tests |
+| Behavior change | Update all affected docs | Before/after tests |
+
+Documentation standard: scikit-learn quality. Every public function has Args, Returns,
+Raises, Examples. Every example is runnable. Generated SQL is shown. Edge cases documented.
+
+Testing standard: compare with sklearn/scipy where possible. Test extreme edges (single row,
+all NULLs, 1e308 values, unicode columns, SQL keyword columns). Run mutation testing on
+critical modules. Zero surviving mutants in compiler.py and transformer.py.
+
 ## Coding Conventions
 
 - Python 3.10+ (use `X | Y` union types, not `Union[X, Y]`)
