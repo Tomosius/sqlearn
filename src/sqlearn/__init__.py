@@ -30,7 +30,10 @@ from sqlearn.core.schema import (
 )
 from sqlearn.core.transformer import Transformer
 from sqlearn.custom import Expression, custom
+from sqlearn.encoders.frequency import FrequencyEncoder
+from sqlearn.encoders.hash import HashEncoder
 from sqlearn.encoders.onehot import OneHotEncoder
+from sqlearn.encoders.ordinal import OrdinalEncoder
 from sqlearn.imputers.imputer import Imputer
 from sqlearn.scalers.maxabs import MaxAbsScaler
 from sqlearn.scalers.minmax import MinMaxScaler
@@ -46,7 +49,9 @@ __all__ = [
     "DuckDBBackend",
     "Expression",
     "FitError",
+    "FrequencyEncoder",
     "FrozenError",
+    "HashEncoder",
     "Imputer",
     "InvalidStepError",
     "MaxAbsScaler",
@@ -55,6 +60,7 @@ __all__ = [
     "Normalizer",
     "NotFittedError",
     "OneHotEncoder",
+    "OrdinalEncoder",
     "Pipeline",
     "ProFeatureError",
     "RobustScaler",
