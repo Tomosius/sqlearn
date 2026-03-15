@@ -28,7 +28,7 @@ These are ready to work on. Ordered by priority.
 ### Milestone 2 — Core Compiler (v0.1.0)
 - [x] `schema.py` — Schema dataclass, column type detection
 - [x] `transformer.py` — Transformer base class with `_validate_custom()` method
-- [ ] `custom.py` — `sq.custom()` template-based transformer factory
+- [x] `custom.py` — `sq.custom()` template-based transformer factory
 - [x] `backend.py` — Backend protocol + DuckDB implementation
 - [x] `io.py` — input resolver (table/file/DataFrame → DuckDB)
 - [x] `errors.py` — error hierarchy (incl. `ClassificationError`, `ProFeatureError`)
@@ -37,9 +37,9 @@ These are ready to work on. Ordered by priority.
 - [x] `Imputer` — proves aggregation discovery, COALESCE composition
 - [x] `StandardScaler` — proves arithmetic composition
 - [x] `OneHotEncoder` — proves layer boundaries, CASE generation
-- [ ] `sq.Expression()` — static one-liner custom transform
-- [ ] `sq.custom()` — template-based custom transform (static + dynamic)
-- [ ] Custom transformer validation tests (type checking, schema, params)
+- [x] `sq.Expression()` — static one-liner custom transform
+- [x] `sq.custom()` — template-based custom transform (static + dynamic)
+- [x] Custom transformer validation tests (type checking, schema, params)
 - [x] Integration tests: pipeline output matches sklearn (`np.allclose`)
 - [x] SQL snapshot tests
 - [ ] Documentation site infrastructure (mkdocs + mkdocstrings)
