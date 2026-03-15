@@ -59,12 +59,12 @@ These are ready to work on. Ordered by priority.
 - [x] Design decisions guide: why each approach was chosen, trade-offs considered
 
 ### Milestone 4 — Feature Engineering (v0.3.0)
-- [ ] Arithmetic transforms (Log, Sqrt, Power, Clip, etc.)
-- [ ] String transforms (Length, Lower, Split, Extract, etc.)
-- [ ] Datetime transforms (DateParts, DateDiff, IsWeekend, etc.)
-- [ ] Window transforms (Lag, Lead, Rolling*, Rank, etc.)
-- [ ] OutlierHandler, TargetTransform
-- [ ] Feature selection (DropCorrelated, VarianceThreshold, SelectKBest)
+- [x] Arithmetic transforms (Log, Sqrt, Power, Clip, Abs, Round, Reciprocal)
+- [x] String transforms (StringLength, Lower, Upper, Trim, Replace, Substring)
+- [x] Datetime transforms (DateParts, DateDiff, IsWeekend, Quarter)
+- [x] Window transforms (Lag, Lead, RollingMean, RollingStd, Rank, RowNumber)
+- [x] OutlierHandler, TargetTransform
+- [x] Feature selection (Drop, DropCorrelated, VarianceThreshold, SelectKBest)
 - [ ] AutoFeatures family
 - [ ] Examples gallery: runnable examples with real datasets per transformer category
 
