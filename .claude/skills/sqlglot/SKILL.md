@@ -206,6 +206,59 @@ exp.Sin(this=exp.Div(
 ))
 ```
 
+## Column Substitution (Compiler Internal)
+
+The compiler uses `_substitute_columns()` to inline static expressions into dynamic
+aggregations. This replaces `Column("price")` with the current composed expression:
+
+```python
+# If static step transforms price → price * 2:
+# Before substitution: AVG(Column("price"))
+# After substitution:  AVG(price * 2)
+
+def _substitute_columns(expression, current_exprs):
+    expression = expression.copy()
+    for node in expression.walk():
+        if isinstance(node, exp.Column) and not node.table:
+            col_name = node.name
+            if col_name in current_exprs:
+                node.replace(current_exprs[col_name].copy())
+    return expression
+```
+
+## CTE Construction
+
+```python
+# Wrap expressions into a CTE and reset to bare column refs
+selects = [v.as_(k) for k, v in exprs.items()]
+cte_query = exp.select(*selects).from_(exp.to_table(source))
+
+# Attach CTE to final query
+final_query = final_query.with_("__cte_0", as_=cte_query)
+```
+
+## Building a Full SELECT
+
+```python
+# Build SELECT from expression dict
+selects = [v.as_(k) for k, v in exprs.items()]
+source_expr = exp.to_table("my_table")
+query = exp.select(*selects).from_(source_expr)
+
+# Render to SQL
+sql = query.sql(dialect="duckdb")
+```
+
+## Anonymous Functions (database-specific)
+
+```python
+# For functions not built into sqlglot:
+exp.Anonymous(this="PI", expressions=[])           # PI()
+exp.Anonymous(this="REGEXP_EXTRACT", expressions=[  # REGEXP_EXTRACT(col, pattern)
+    exprs[col], exp.Literal.string(r"\d+")
+])
+```
+
 ## sqlearn Conventions
 
 1. **Param naming:** `{col}__{stat}` — e.g., `price__mean`, `city__categories`

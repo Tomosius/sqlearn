@@ -1,6 +1,6 @@
 ---
 name: core
-description: Provides architecture guidance for sqlearn core modules — compiler, schema, backend, pipeline, IO, output, and errors. Trigger when working on expression composition, CTE promotion, layer resolution, schema propagation, the fit/transform lifecycle, or any file in src/sqlearn/core/. Essential for milestone 2 and all compiler-related work.
+description: Provides architecture guidance for sqlearn core modules — compiler, schema, backend, pipeline, IO, and errors. Trigger when working on expression composition, CTE promotion, layer resolution, schema propagation, the fit/transform lifecycle, or any file in src/sqlearn/core/. Also trigger when debugging pipeline behavior, investigating compilation issues, or understanding how transformers compose into SQL.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -13,42 +13,120 @@ Reference for working on `src/sqlearn/core/`. Read the relevant design doc for d
 
 ## Module Responsibilities
 
-| Module | Purpose | Key class/function |
+| Module | Purpose | Key exports |
 |---|---|---|
-| `schema.py` | Column types, type detection, schema diffing | `Schema` dataclass |
+| `schema.py` | Column types, type detection, selectors, column resolution | `Schema`, `resolve_columns()`, `ColumnSelector` |
 | `transformer.py` | Base class all transformers extend | `Transformer` |
-| `backend.py` | Database protocol + DuckDB implementation | `Backend` protocol |
+| `backend.py` | Database protocol + DuckDB implementation | `Backend`, `DuckDBBackend` |
 | `io.py` | Input resolution (file/table/DataFrame → DuckDB) | `resolve_input()` |
-| `compiler.py` | Expression composition, CTE promotion, layers | `Compiler` |
+| `compiler.py` | Three-phase compiler: classify, batch fit, compose transform | `plan_fit()`, `build_fit_queries()`, `compose_transform()` |
 | `pipeline.py` | fit/transform/to_sql orchestration | `Pipeline` |
-| `output.py` | DuckDB result → numpy/arrow/pandas/polars | `TransformResult` |
-| `errors.py` | Error hierarchy | `SQLearnError` and subclasses |
+| `errors.py` | Error hierarchy | `SQLearnError` and 10 subclasses |
+
+**Not yet implemented:** `output.py` (TransformResult — planned for M3+).
 
 ## The Transformer Lifecycle
 
 ```
 fit(data, y="target")
   │
-  ├── 1. IO: resolve input → DuckDB table/view
-  ├── 2. Schema: detect column types from source
-  ├── 3. Classify: static or dynamic per step (Section 4.3 of docs/03)
-  ├── 4. Layer: group steps into layers (boundary = schema-changing dynamic step)
-  ├── 5. Discover: run batched aggregate queries per layer
+  ├── 1. IO: resolve_input() → DuckDB table/view name
+  ├── 2. Schema: Schema.from_source() → detect column types
+  ├── 3. Plan: plan_fit() → classify steps, resolve columns, group layers
+  │     ├── classify_step() → StepClassification (kind, tier, reason)
+  │     ├── detect_schema_change() → SchemaChangeResult
+  │     └── Group into Layer objects (boundary = dynamic + schema-changing)
+  ├── 4. Fit: build_fit_queries() per layer → batched SQL
   │     ├── discover() → scalar params → self.params_
   │     └── discover_sets() → set values → self.sets_
-  └── 6. Store: params_ and sets_ populated, ready for transform
+  └── 5. Store: params_, sets_, columns_, input_schema_, output_schema_ populated
 
 transform(data)
   │
-  ├── 1. IO: resolve input
-  ├── 2. Compile: chain all expressions() into one SELECT
+  ├── 1. IO: resolve_input()
+  ├── 2. Compile: compose_transform() → one SELECT with optional CTEs
   │     ├── Start with bare column refs: {"price": Column("price")}
-  │     ├── Each step transforms the expression dict
-  │     └── Steps using query() get CTE treatment
-  └── 3. Execute: run compiled SQL, wrap result as TransformResult
+  │     ├── Each step: _apply_expressions() merges into expression dict
+  │     ├── Steps using query() get CTE promotion
+  │     └── Auto-CTE at depth > 8 (_DEFAULT_CTE_DEPTH)
+  └── 3. Execute: backend.execute() → numpy array
 ```
 
-## Expression Composition (The Core Innovation)
+## Compiler Data Structures
+
+These are the actual dataclasses used by the compiler (in `compiler.py`):
+
+```python
+@dataclass(frozen=True)
+class StepClassification:
+    kind: str        # "static" or "dynamic"
+    tier: int        # 1 (built-in), 2 (custom declared), 3 (custom undeclared)
+    reason: str      # human-readable audit trail
+    warnings: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class SchemaChangeResult:
+    changes: bool    # True if output differs from input
+    reason: str
+
+@dataclass
+class StepInfo:
+    step: Transformer
+    classification: StepClassification
+    schema_change: SchemaChangeResult
+    columns: list[str]
+    input_schema: Schema
+    step_output_schema: Schema
+
+@dataclass
+class Layer:
+    steps: list[StepInfo]
+    input_schema: Schema
+    output_schema: Schema
+
+@dataclass
+class FitPlan:
+    layers: list[Layer]
+
+@dataclass
+class FitQueries:
+    aggregate_query: exp.Expression | None   # batched scalars, or None if all static
+    set_queries: dict[str, exp.Expression]   # per-step set discovery
+    param_mapping: dict[str, tuple[str, str]]  # alias → (step_index, param_name)
+```
+
+## Three-Phase Compiler
+
+### Phase 1: `plan_fit(steps, schema, y_column)` → `FitPlan`
+
+Classifies steps and groups into layers:
+
+1. For each step: resolve columns via `_resolve_columns_spec()` + `resolve_columns()`
+2. Classify via `classify_step()` (three-tier model)
+3. Detect schema change via `detect_schema_change()`
+4. Create `StepInfo`
+5. Layer boundary after any **dynamic + schema-changing** step
+
+### Phase 2: `build_fit_queries(layer, source, current_exprs)` → `FitQueries`
+
+Builds minimal SQL to fit one layer:
+
+- Static steps: compose expressions forward via `step.expressions()` (for inlining into dynamic aggregations via `_substitute_columns()`)
+- Dynamic steps: collect aggregations into one batched SELECT + separate set queries
+- Result: typically 1-2 queries per layer (one aggregate + N set queries)
+
+### Phase 3: `compose_transform(steps, source)` → `exp.Select`
+
+Composes all steps into one SELECT:
+
+1. Start with bare column refs from first step's `input_schema_`
+2. For each step: try `query()` first (CTE if returned), else `_apply_expressions()`
+3. Validate all outputs are sqlglot AST nodes
+4. Auto-CTE when depth exceeds `_DEFAULT_CTE_DEPTH` (8)
+5. Column collision detection: raises `SchemaError` if two steps produce same new column
+6. Final: build SELECT with all CTEs attached via `.with_()`
+
+## Expression Composition
 
 Each transformer's `expressions()` receives the current expression dict and returns modified entries.
 The compiler chains them — output of step N becomes input to step N+1:
@@ -63,6 +141,12 @@ Final SQL: `SELECT (COALESCE(price, 42.5) - 42.5) / NULLIF(12.3, 0) AS price FRO
 
 Three Python steps → one SQL query. No intermediate materialization.
 
+**Key: `_apply_expressions()`** — the base class wrapper that:
+- Calls `self.expressions(self.columns_, exprs)`
+- Merges modified columns into full expression dict (passthrough for unmodified)
+- Detects undeclared new columns (warns if `output_schema()` doesn't declare them)
+- Filters output to match `output_schema()` columns
+
 ## When to Use expressions() vs query()
 
 | Situation | Method | Why |
@@ -71,28 +155,26 @@ Three Python steps → one SQL query. No intermediate materialization.
 | Window functions (LAG, RANK, rolling) | `query()` | Windows can't nest inside expressions |
 | JOINs (Lookup, merge) | `query()` | Needs its own FROM clause |
 | Row-level filtering (Filter, Sample) | `query()` | Needs WHERE/LIMIT clause |
-| Cross-column operations (Normalizer L2) | `query()` | References multiple columns in one expression |
 
 If both `query()` and `expressions()` exist on a transformer, `query()` wins.
+Base class `query()` returns `None` (not NotImplementedError) — this is the fallback signal.
 
 ## CTE Promotion Rules
-
-CTEs aren't bad, but fewer = better DuckDB optimization.
 
 **No CTE (default):** Column-level expressions compose inline.
 
 **CTE required when:**
-1. A step uses `query()` (window functions, JOINs, filtering)
-2. Expression nesting depth > 8 (auto-promoted for readability)
-3. Complex expressions referenced by multiple downstream branches (deduplication)
+1. A step uses `query()` — always promoted (`__cte_0`, `__cte_1`, ...)
+2. Expression depth > `_DEFAULT_CTE_DEPTH` (8) — auto-promoted for readability
+3. Layer boundary during fit — new source materialized
 
-**Never promote:** Bare column refs (`Column("price")`) — they're free to duplicate.
+**CTE naming:** `__cte_0`, `__cte_1`, etc. (sequential counter in `compose_transform`)
 
 ## Layer Resolution (Fit Phase Only)
 
 Layers only matter during fit. Transform is always one SQL query.
 
-**Layer boundary** = after any schema-changing dynamic step.
+**Layer boundary** = after any **dynamic + schema-changing** step.
 
 ```
 Pipeline:
@@ -107,8 +189,6 @@ Pipeline:
 **Layer 1 fit:** One query against Layer 0's materialized output for MinMaxScaler.
 Static steps contribute zero cost to the fit query.
 
-**Total fit: 2-4 queries for the entire pipeline** (vs sklearn's N full data passes).
-
 ## Schema Propagation
 
 Schema flows through the pipeline. Most transformers don't change it.
@@ -119,54 +199,70 @@ Schema flows through the pipeline. Most transformers don't change it.
 - Drop/Select: removes columns
 - Rename: renames columns
 
-The compiler uses `output_schema()` to know what columns exist for the next step.
+The compiler uses `output_schema()` to detect schema changes and create layer boundaries.
 
-## Static vs Dynamic Classification
+## Three-Tier Classification
 
-| Classification | `discover()` returns | Fit cost | Example |
+| Tier | What | Trust | Verification |
 |---|---|---|---|
-| Static | `{}` (empty) | Zero | Log, Rename, Cast, Filter |
-| Dynamic | `{name: aggregate}` | One query per layer | StandardScaler, Imputer, OneHotEncoder |
+| 1 | Built-in with `_classification` set | Trusted immediately | CI-validated |
+| 2 | Custom with `_classification` set | Verify once, then cache | `_verify_custom_declaration()` |
+| 3 | Custom without `_classification` | Full conservative inspection | `_inspect_undeclared_step()` |
 
-Built-in transformers declare `_classification` as a class variable.
-Custom transformers leave it as `None` → auto-detected at first `fit()`.
+**Safety rule:** If in doubt, classify as dynamic (never miss a fit query).
 
-Some transformers are **conditionally dynamic** — classification depends on constructor args:
-- `Clip(lower=0, upper=100)` → static (literal values)
-- `Clip(lower="p01", upper="p99")` → dynamic (needs percentiles from data)
+Tier 2 verification: calls `discover()` and `discover_sets()`, checks consistency with declared classification. Raises `ClassificationError` on mismatch. Caches with `_classification_verified = True`.
 
-## Columns & Union Compilation
-
-**`Columns`** (parallel column routing) → compiles to one SELECT, no CTEs:
-- Each branch sees only its target columns
-- Branch expressions merged into single SELECT
-- Column name collisions impossible (disjoint columns enforced)
-- Exception: if a branch uses `query()`, that branch gets its own CTE
-
-**`Union`** (parallel feature combination) → CTEs per branch:
-- Each branch may produce different columns
-- Name collision → prefix with branch name: `base__price`, `poly__price`
-- Optimization: if ALL branches are expression-only, merge into one SELECT
-
-## Two-Phase Discovery (for CV)
-
-1. **Phase 1:** Schema from full data (one DESCRIBE query)
-2. **Phase 2:** Values per fold (N fold-specific discover queries)
-
-This ensures rare categories seen in training folds are preserved across all folds.
+Tier 3 inspection: calls `discover()`, `discover_sets()`, checks `fit()` override, returns static only if all checks pass.
 
 ## Error Hierarchy
 
 ```
 SQLearnError (base)
-├── SchemaError      — column not found, type mismatch
-├── FitError         — missing target, invalid data, empty table
-├── CompilationError — SQL generation failed
+├── SchemaError         — column not found, type mismatch, collision
+├── FitError            — missing target, invalid data, empty table
+├── CompilationError    — SQL generation failed, empty pipeline
 ├── ClassificationError — discover/expressions inconsistency
-└── ProFeatureError  — Studio Pro feature without license
+├── NotFittedError      — transform before fit
+├── FrozenError         — modify frozen pipeline
+├── InvalidStepError    — invalid step in pipeline
+├── MissingColumnError  — referenced column doesn't exist
+├── StaticViolationError — static step tried to learn
+├── UnseenCategoryError — unseen category at transform time
+└── ProFeatureError     — Studio Pro feature without license
 ```
 
-All errors should include helpful context and suggest solutions.
+## Transformer State Attributes
+
+After `fit()`, these attributes are populated:
+
+| Attribute | Type | Set by | Purpose |
+|---|---|---|---|
+| `_fitted` | `bool` | Pipeline | True after successful fit |
+| `params_` | `dict[str, Any] \| None` | Pipeline (from discover) | Scalar stats |
+| `sets_` | `dict[str, list[dict]] \| None` | Pipeline (from discover_sets) | Category lists |
+| `columns_` | `list[str] \| None` | Pipeline | Resolved target columns |
+| `input_schema_` | `Schema \| None` | Pipeline | Schema before this step |
+| `output_schema_` | `Schema \| None` | Pipeline | Schema after this step |
+| `_y_column` | `str \| None` | Pipeline | Target column name |
+| `_owner_thread` | `int \| None` | `_check_thread()` | Thread safety guard |
+| `_owner_pid` | `int \| None` | `_check_thread()` | Process safety guard |
+
+## Pipeline API
+
+```python
+class Pipeline:
+    steps: list[tuple[str, Transformer]]  # (name, transformer) pairs
+
+    def fit(self, data, y=None, *, backend=None) -> Pipeline
+    def transform(self, data, *, backend=None) -> np.ndarray
+    def fit_transform(self, data, y=None, *, backend=None) -> np.ndarray
+    def to_sql(self, *, dialect="duckdb") -> str
+    def clone(self) -> Pipeline
+```
+
+Steps input accepts: bare list, tuple list, or dict. Normalized to `(name, Transformer)` pairs.
+Auto-naming: `step_00`, `step_01`, etc. when names not provided.
 
 ## Key Design Decisions
 
@@ -176,8 +272,9 @@ These are settled — don't revisit without good reason:
 - All SQL via sqlglot ASTs, never raw strings
 - `y` is a column name string, not a numpy array
 - `+` operator for pipeline composition (non-mutating `+=`)
-- `TransformResult` uses `__array__` protocol (not numpy subclass)
 - Pipelines are NOT thread-safe — use `clone()` for concurrent access
 - Auto column routing via `_default_columns` attribute
 - `discover()` for scalars, `discover_sets()` for category lists
-- FILTER clause aggregation for fold-specific CV discovery
+- `_apply_expressions()` handles auto-passthrough of unmodified columns
+- Column collision detection in `compose_transform()` (raises `SchemaError`)
+- Three-tier classification with safety fallback to dynamic

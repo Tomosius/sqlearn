@@ -48,7 +48,13 @@ class MyTransformer(Transformer):
     _default_columns = "numeric"    # "numeric", "categorical", "temporal", "all", or None
     _classification = "dynamic"     # "static" or "dynamic" — REQUIRED for built-ins
 
-    def __init__(self, param=default):
+    def __init__(
+        self,
+        param: float = 1.0,
+        *,
+        columns: str | list[str] | ColumnSelector | None = None,
+    ) -> None:
+        super().__init__(columns=columns)
         self.param = param
 ```
 
@@ -106,7 +112,8 @@ Classification can depend on constructor args. Set `_classification` in `__init_
 class Clip(Transformer):
     _default_columns = "numeric"
 
-    def __init__(self, lower=0, upper=100):
+    def __init__(self, lower=0, upper=100, *, columns=None):
+        super().__init__(columns=columns)
         self.lower = lower
         self.upper = upper
         # Literal values = static. Percentile strings = needs data = dynamic.
@@ -251,6 +258,32 @@ The base class validates custom transformers automatically on first `fit()`:
 
 Built-in transformers (Tier 1) skip runtime validation — they're tested in CI instead.
 
+## Base Class Attributes
+
+After `fit()`, these are populated by Pipeline (do NOT set them manually):
+
+| Attribute | Type | Purpose |
+|---|---|---|
+| `_fitted` | `bool` | True after fit |
+| `params_` | `dict[str, Any] \| None` | Scalar stats from discover() |
+| `sets_` | `dict[str, list[dict]] \| None` | Category lists from discover_sets() |
+| `columns_` | `list[str] \| None` | Resolved target columns |
+| `input_schema_` | `Schema \| None` | Schema before this step |
+| `output_schema_` | `Schema \| None` | Schema after this step |
+
+Useful methods inherited from base:
+
+| Method | Purpose |
+|---|---|
+| `get_params()` | Return `__init__` parameters as dict (sklearn-compatible) |
+| `set_params(**kw)` | Set parameters, returns self |
+| `clone()` | Thread-safe independent copy |
+| `copy()` | Deep copy (NOT thread-safe) |
+| `get_feature_names_out()` | Output column names (requires fitted) |
+| `__repr__()` | sklearn-style repr with non-default params |
+| `_repr_html_()` | Jupyter notebook HTML display |
+| `__add__` / `__iadd__` | `a + b` → `Pipeline([a, b])` (non-mutating) |
+
 ## Quick Reference
 
 | Method | Returns | Stored in | When to use |
@@ -258,5 +291,5 @@ Built-in transformers (Tier 1) skip runtime validation — they're tested in CI 
 | `discover()` | `{name: sqlglot_agg}` | `self.params_` | Scalar stats (mean, std, min, max) |
 | `discover_sets()` | `{name: sqlglot_query}` | `self.sets_` | Category lists, ordered values |
 | `expressions()` | `{col: sqlglot_expr}` | — | Inline column transforms |
-| `query()` | `sqlglot.Select` | — | Window functions, JOINs, CTEs |
+| `query()` | `sqlglot.Select \| None` | — | Window functions, JOINs, CTEs. Returns None to fall back to expressions() |
 | `output_schema()` | `Schema` | — | When adding/removing columns |
