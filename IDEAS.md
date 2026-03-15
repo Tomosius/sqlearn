@@ -90,6 +90,40 @@ When an idea matures, move it to `BACKLOG.md` under the right category.
   (not a file), an index on `__sq_fold__` makes fold filtering near-free. For parquet files,
   DuckDB handles this automatically via row group pruning — no user action needed. Consider
   documenting this as a "performance tip" for users with very large persistent tables.
+- **Materialized fold cache (`persistent=True`):** When `sq.Search(..., persistent=True)`,
+  pre-transform all fold splits into physical DuckDB tables stored in a dedicated DuckDB
+  schema (`__sq_search__`). Each fold gets its own table (e.g., `__sq_search__.fold_0_train`,
+  `__sq_search__.fold_0_test`) with data already transformed by the pipeline. Subsequent
+  Search iterations (hyperparameter sweeps, different models) just read from these tables —
+  zero pipeline re-execution.
+  **Schema as single cache slot — always fresh:** The `__sq_search__` schema acts as a cache
+  container with drop-and-recreate semantics. First run: `CREATE SCHEMA __sq_search__` +
+  create fold tables. If user changes the pipeline and re-runs: detect existing schema →
+  drop all tables in it → recreate with fresh transformed data. Data is always correct, no
+  stale cache possible. User explicitly opts in with `persistent=True`, so the behavior is
+  predictable and unsurprising.
+  **Space-aware safety check:** Before materializing, estimate total storage cost:
+  `source_size × n_folds × expansion_factor` (expansion factor accounts for OHE column
+  explosion, etc.). Check available disk (for file-backed DuckDB) or memory (for in-memory).
+  If estimated usage exceeds a threshold (configurable, default 50% of available space),
+  warn the user and require confirmation before proceeding. If space is insufficient, fall
+  back to the non-persistent path (QueryTemplate + FILTER clause) with a warning.
+  **Model-only vs pipeline search — auto-detection:** The biggest win is when only model
+  hyperparameters are being searched (learning_rate, regularization, tree depth, etc.) —
+  pipeline output is identical for every trial, so the cache eliminates all redundant
+  pipeline work. Search can detect this automatically: if search space only contains model
+  params, use persistent cache; if pipeline params change between trials, fall back to
+  QueryTemplate. This makes Optuna/Ray Tune integrations extremely fast — first iteration
+  is normal speed, every subsequent trial is essentially free on the pipeline side.
+  Comparison: scikit-learn re-runs the full pipeline for every trial × every fold (e.g.,
+  100 trials × 5 folds = 500 fit+transform cycles). sqlearn with persistent cache: 5
+  transforms total + 500 table reads.
+  **Cleanup:** `search.clear_cache()` drops the `__sq_search__` schema and all tables.
+  Since `persistent=True` is explicit opt-in, no auto-cleanup — user controls the lifecycle.
+  **Naming note:** Fold table columns like split identifiers must avoid the `__sq_*__` reserved
+  prefix (Schema validation rejects it). Use `_sq_split` or a non-reserved name. The schema
+  name `__sq_search__` is fine — it's a DuckDB namespace, not a column name, so Schema
+  validation never sees it.
 
 ## Studio
 
