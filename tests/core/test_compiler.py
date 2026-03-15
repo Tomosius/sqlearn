@@ -1065,3 +1065,412 @@ class TestComposeTransform:
         # Leave columns_ as None (unfitted) — compose_transform checks this
         with pytest.raises(CompilationError, match="columns_"):
             compose_transform([step], "data")
+
+
+# --- Additional mocks for defensive coverage paths ---
+
+
+class _DeclaredDynamicDiscoverRaises(Transformer):
+    """Declared dynamic, discover() raises → Tier 2 fallback."""
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, exp.Expression]:
+        """Raises."""
+        msg = "broken"
+        raise RuntimeError(msg)
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _DeclaredDynamicDiscoverNonDict(Transformer):
+    """Declared dynamic, discover() returns list → Tier 2 fallback."""
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> Any:
+        """Returns list."""
+        return [1, 2, 3]
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _DeclaredDynamicSetsRaises(Transformer):
+    """Declared dynamic, discover_sets() raises → Tier 2 catch."""
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, exp.Expression]:
+        """Raises."""
+        msg = "broken"
+        raise RuntimeError(msg)
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _DeclaredDynamicSetsNonDict(Transformer):
+    """Declared dynamic, discover_sets() returns non-dict → Tier 2."""
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> Any:
+        """Returns string."""
+        return "not_a_dict"
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _UndeclaredSetsRaises(Transformer):
+    """Undeclared, discover_sets() raises → Tier 3 catch."""
+
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, exp.Expression]:
+        """Raises."""
+        msg = "broken"
+        raise RuntimeError(msg)
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _UndeclaredSetsNonDict(Transformer):
+    """Undeclared, discover_sets() returns non-dict → Tier 3."""
+
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> Any:
+        """Returns list."""
+        return [1, 2]
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+class _OutputSchemaReturnsNonSchema(Transformer):
+    """output_schema() returns non-Schema (int) → assume changes."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+    def output_schema(self, schema: Schema) -> Any:
+        """Returns int."""
+        return 42
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+_OutputSchemaReturnsNonSchema.__module__ = "sqlearn.fake"
+
+
+class _DynamicNonExprAggregate(Transformer):
+    """Dynamic step where discover() returns non-Expression values."""
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, Any]:
+        """Returns dict with string value (not Expression)."""
+        return {"bad_agg": "not_an_expression"}
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+_DynamicNonExprAggregate.__module__ = "sqlearn.fake"
+
+
+class _DynamicSetsNonExprValues(Transformer):
+    """Dynamic step where discover_sets() returns dict with non-Expression values.
+
+    Tests the branch 670->669 in _collect_sets where a set_query value
+    is not an exp.Expression and gets skipped.
+    """
+
+    _classification = "dynamic"
+    _default_columns = "all"
+
+    def discover_sets(
+        self,
+        columns: list[str],
+        schema: Schema,
+        y_column: str | None = None,
+    ) -> dict[str, Any]:
+        """Returns dict with non-Expression value."""
+        return {"col__categories": "not_an_expression"}
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Noop."""
+        return {c: exprs[c] for c in columns}
+
+
+_DynamicSetsNonExprValues.__module__ = "sqlearn.fake"
+
+
+class _StaticNoExpressions(Transformer):
+    """Static step that doesn't override expressions() → base raises NotImplementedError."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+
+_StaticNoExpressions.__module__ = "sqlearn.fake"
+
+
+class _BrokenExpressionsStep(Transformer):
+    """Step where expressions() always raises RuntimeError."""
+
+    _classification = "static"
+    _default_columns = "all"
+
+    def expressions(
+        self, columns: list[str], exprs: dict[str, exp.Expression]
+    ) -> dict[str, exp.Expression]:
+        """Raises."""
+        msg = "broken"
+        raise RuntimeError(msg)
+
+
+_BrokenExpressionsStep.__module__ = "sqlearn.ops.fake"
+
+
+# --- Tests for defensive code paths ---
+
+
+class TestClassifyStepTier2Defensive:
+    """Tier 2: declared classification with broken discover/sets."""
+
+    def test_declared_dynamic_discover_raises(self, columns: list[str], schema: Schema) -> None:
+        """Declared dynamic, discover() raises → fallback to dynamic."""
+        result = classify_step(_DeclaredDynamicDiscoverRaises(), columns, schema)
+        assert result.kind == "dynamic"
+
+    def test_declared_dynamic_discover_non_dict(self, columns: list[str], schema: Schema) -> None:
+        """Declared dynamic, discover() returns list → fallback to dynamic."""
+        result = classify_step(_DeclaredDynamicDiscoverNonDict(), columns, schema)
+        assert result.kind == "dynamic"
+
+    def test_declared_dynamic_sets_raises(self, columns: list[str], schema: Schema) -> None:
+        """Declared dynamic, discover_sets() raises → caught, still dynamic."""
+        result = classify_step(_DeclaredDynamicSetsRaises(), columns, schema)
+        assert result.kind == "dynamic"
+
+    def test_declared_dynamic_sets_non_dict(self, columns: list[str], schema: Schema) -> None:
+        """Declared dynamic, discover_sets() returns non-dict → caught."""
+        result = classify_step(_DeclaredDynamicSetsNonDict(), columns, schema)
+        assert result.kind == "dynamic"
+
+
+class TestClassifyStepTier3Defensive:
+    """Tier 3: undeclared with broken discover_sets."""
+
+    def test_undeclared_sets_raises(self, columns: list[str], schema: Schema) -> None:
+        """Undeclared, discover_sets() raises → caught, classify as static."""
+        result = classify_step(_UndeclaredSetsRaises(), columns, schema)
+        assert result.kind == "static"
+        assert result.tier == 3
+
+    def test_undeclared_sets_non_dict(self, columns: list[str], schema: Schema) -> None:
+        """Undeclared, discover_sets() returns non-dict → caught."""
+        result = classify_step(_UndeclaredSetsNonDict(), columns, schema)
+        assert result.kind == "static"
+        assert result.tier == 3
+
+
+class TestDetectSchemaChangeDefensive:
+    """Defensive: output_schema() returns non-Schema type."""
+
+    def test_output_schema_returns_non_schema(self, schema: Schema) -> None:
+        """output_schema() returns int → assume schema changes."""
+        result = detect_schema_change(_OutputSchemaReturnsNonSchema(), schema)
+        assert result.changes is True
+
+
+class TestPlanFitDefensive:
+    """Defensive code paths in plan_fit."""
+
+    def test_output_schema_raises_fallback(self, schema: Schema) -> None:
+        """Step where output_schema() raises → plan_fit uses current schema."""
+        steps = [_OutputSchemaRaises(), _BuiltinDynamic()]
+        plan = plan_fit(steps, schema)
+        assert len(plan.layers) >= 1
+
+
+class TestBuildFitQueriesDefensive:
+    """Defensive code paths in build_fit_queries."""
+
+    def _make_layer(self, steps: list[Transformer], schema: Schema) -> Layer:
+        """Helper: create Layer via plan_fit."""
+        plan = plan_fit(steps, schema)
+        return plan.layers[0]
+
+    def _bare_exprs(self, schema: Schema) -> dict[str, exp.Expression]:
+        """Helper: bare column references."""
+        return {c: exp.Column(this=c) for c in schema.columns}
+
+    def test_discover_raises_skipped(self, schema: Schema) -> None:
+        """Dynamic step where discover() raises → no aggregations."""
+        layer = self._make_layer([_DeclaredDynamicDiscoverRaises()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is None
+
+    def test_discover_non_dict_skipped(self, schema: Schema) -> None:
+        """Dynamic step where discover() returns non-dict → skipped."""
+        layer = self._make_layer([_DeclaredDynamicDiscoverNonDict()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is None
+
+    def test_non_expression_aggregate_skipped(self, schema: Schema) -> None:
+        """Dynamic step with non-Expression aggregate value → skipped."""
+        layer = self._make_layer([_DynamicNonExprAggregate()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is None
+
+    def test_discover_sets_raises_skipped(self, schema: Schema) -> None:
+        """Dynamic step where discover_sets() raises → no set queries."""
+        layer = self._make_layer([_DeclaredDynamicSetsRaises()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert len(result.set_queries) == 0
+
+    def test_discover_sets_non_dict_skipped(self, schema: Schema) -> None:
+        """Dynamic step where discover_sets() returns non-dict → skipped."""
+        layer = self._make_layer([_DeclaredDynamicSetsNonDict()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert len(result.set_queries) == 0
+
+    def test_discover_sets_non_expr_values_skipped(self, schema: Schema) -> None:
+        """discover_sets() returns dict with non-Expression values → skipped.
+
+        The _collect_sets function checks each value with isinstance(set_query,
+        exp.Expression). Non-expression values are silently skipped.
+        Covers branch 670->669.
+        """
+        layer = self._make_layer([_DynamicSetsNonExprValues()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert len(result.set_queries) == 0
+
+    def test_static_expressions_not_implemented(self, schema: Schema) -> None:
+        """Static step without expressions() → caught, skipped."""
+        layer = self._make_layer([_StaticNoExpressions(), _BuiltinDynamic()], schema)
+        exprs = self._bare_exprs(schema)
+        result = build_fit_queries(layer, "data", exprs)
+        assert result.aggregate_query is not None
+
+
+class TestComposeTransformDefensive:
+    """Defensive code paths in compose_transform."""
+
+    def test_depth_non_expression(self) -> None:
+        """_expression_depth on non-Expression → returns 0."""
+        from sqlearn.core.compiler import (
+            _expression_depth,
+        )
+
+        assert _expression_depth("not_an_expression") == 0  # type: ignore[arg-type]
+
+    def test_max_depth_empty_dict(self) -> None:
+        """_max_depth on empty dict → returns 0."""
+        from sqlearn.core.compiler import (
+            _max_depth,
+        )
+
+        assert _max_depth({}) == 0
+
+    def test_no_input_schema_fallback(self, schema: Schema) -> None:
+        """compose_transform with input_schema_ = None → uses columns_."""
+        step = _BuiltinStatic()
+        _fit_step(step, schema)
+        step.input_schema_ = None
+        result = compose_transform([step], "data")
+        assert "FROM" in result.sql(dialect="duckdb")
+
+    def test_query_step_no_output_schema(self, schema: Schema) -> None:
+        """query() step with output_schema_ = None → uses columns_ fallback."""
+        step = _QueryStep()
+        _fit_step(step, schema)
+        step.output_schema_ = None
+        result = compose_transform([step], "data")
+        assert isinstance(result, exp.Select)
+
+    def test_expressions_raises_in_collision_check(self, schema: Schema) -> None:
+        """expressions() raises → caught in collision check, propagates from _apply."""
+        step = _BrokenExpressionsStep()
+        _fit_step(step, schema)
+        with pytest.raises(RuntimeError, match="broken"):
+            compose_transform([step], "data")
