@@ -35,6 +35,11 @@ from sqlearn.encoders.hash import HashEncoder
 from sqlearn.encoders.onehot import OneHotEncoder
 from sqlearn.encoders.ordinal import OrdinalEncoder
 from sqlearn.imputers.imputer import Imputer
+from sqlearn.ops.cast import Cast
+from sqlearn.ops.deduplicate import Deduplicate
+from sqlearn.ops.filter import Filter
+from sqlearn.ops.rename import Rename
+from sqlearn.ops.sample import Sample
 from sqlearn.scalers.maxabs import MaxAbsScaler
 from sqlearn.scalers.minmax import MinMaxScaler
 from sqlearn.scalers.normalizer import Normalizer
@@ -43,11 +48,14 @@ from sqlearn.scalers.standard import StandardScaler
 
 __all__ = [
     "Backend",
+    "Cast",
     "ClassificationError",
     "ColumnSelector",
     "CompilationError",
+    "Deduplicate",
     "DuckDBBackend",
     "Expression",
+    "Filter",
     "FitError",
     "FrequencyEncoder",
     "FrozenError",
@@ -63,8 +71,10 @@ __all__ = [
     "OrdinalEncoder",
     "Pipeline",
     "ProFeatureError",
+    "Rename",
     "RobustScaler",
     "SQLearnError",
+    "Sample",
     "Schema",
     "SchemaError",
     "StandardScaler",
